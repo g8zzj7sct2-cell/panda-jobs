@@ -1,0 +1,773 @@
+/* Panda Jobs — app (Plan Tasks 1, 3, 4, 5, 6).
+ * Hash routes:  #/            owner panel (login gate in demo; Supabase Auth live)
+ *               #/c/<token>   client portal (no account, token only)
+ */
+(function () {
+  "use strict";
+  var D = window.PandaData;
+  var COMPANY = window.PandaPDF.COMPANY;
+  var app = document.getElementById("app");
+  var DEMO = D.DEMO_MODE;
+  var DEMO_PASSWORD = "panda2026"; // demo gate only — live mode uses Supabase Auth
+  var REF_RANGES = [
+    ["Diagnostic / service call", "$75 – $99"],
+    ["Furnace tune-up", "$89 – $119"],
+    ["AC tune-up", "$89 – $119"],
+    ["Ignitor replacement", "$175 – $400"],
+    ["Flame sensor", "$150 – $300"],
+    ["Capacitor", "$150 – $300"],
+    ["Blower motor", "$450 – $1,100"],
+    ["Thermostat replacement", "$150 – $450"],
+    ["Circuit board", "$300 – $650"],
+    ["New furnace installed", "$4,500 – $9,500"],
+    ["New AC installed (with coil)", "$5,000 – $9,000"],
+    ["Full system (furnace + AC)", "$7,500 – $13,000"],
+    ["Tank water heater 40/50 gal installed", "$1,800 – $3,200"],
+    ["Tankless water heater installed", "$3,500 – $6,500"],
+    ["Maintenance plan (if offered)", "$15 – $20 / mo"]
+  ];
+  var STAGES = [
+    ["draft", "Draft"], ["quote", "Quote sent"], ["signed", "Signed / Approved"], ["scheduled", "Scheduled"],
+    ["in_progress", "In progress"], ["done", "Done"], ["invoiced", "Invoiced"]
+  ];
+  function stageLabel(s) { for (var i = 0; i < STAGES.length; i++) if (STAGES[i][0] === s) return STAGES[i][1]; return s; }
+  function money(n) { return window.PandaPDF.money(n); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtDate(iso) { if (!iso) return ""; try { return new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return iso; } }
+  var PUBLIC_BASE = (window.PANDA_CONFIG && window.PANDA_CONFIG.APP_PUBLIC_URL) || "";
+  function clientLink(token) { return (PUBLIC_BASE || (location.origin + location.pathname)) + "#/c/" + token; }
+  function validEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(s || "").trim()); }
+  function sendLogHTML(job) {
+    var log = job.sendLog || [];
+    if (!log.length) return "";
+    return '<h4 class="send-log-h">Send history</h4>' + log.map(function (e) {
+      return '<p class="small muted send-log-line">Sent via ' + esc(e.channel) +
+        (e.channel === "Email" && e.to ? " to " + esc(e.to) : "") + " · " + fmtDate(e.at) + "</p>";
+    }).join("");
+  }
+  function signedSig(job) {
+    var s = null;
+    (job.signatures || []).forEach(function (x) { if (x.version === job.signedVersion) s = x; });
+    return job.signedVersion > 0 ? s : null;
+  }
+  function statusTimeline(job) {
+    var order = ["draft", "quote", "signed", "scheduled", "in_progress", "done", "invoiced"];
+    var idx = order.indexOf(job.status);
+    var labels = ["Draft", "Quote", "Signed", "Scheduled", "Working", "Done", "Invoiced"];
+    return '<div class="timeline">' + labels.map(function (l, i) {
+      return "<div" + (i <= idx ? ' class="done"' : "") + ">" + l + "</div>";
+    }).join("") + "</div>";
+  }
+  function headerHTML(sub) {
+    return '<header class="app-header"><img src="assets/logo.png" alt="Angry Panda logo">' +
+      '<div class="brand">Angry Panda<small>Heating and Cooling — Chicago, IL</small></div>' +
+      '<div class="spacer"></div>' +
+      (sub || "") +
+      (DEMO ? '<span class="badge demo">DEMO MODE</span>' : '<span class="badge live">LIVE</span>') +
+      "</header>";
+  }
+  function footerHTML() {
+    return '<footer class="app-foot">' + esc(COMPANY.name) + " • " + esc(COMPANY.cert) + "<br>" +
+      '<a href="tel:+14356806873">' + esc(COMPANY.phone) + "</a> • " + esc(COMPANY.email) + " • Chicago, IL</footer>";
+  }
+  function errBox(msg) { return '<div class="notice bad" role="alert">' + esc(msg) + "</div>"; }
+
+  /* ---------------- photo compression (Task 6) ---------------- */
+  function processPhotoFile(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var MAX = 1600, w = img.naturalWidth, h = img.naturalHeight;
+          var scale = Math.min(1, MAX / Math.max(w, h));
+          var cw = Math.round(w * scale), ch = Math.round(h * scale);
+          var c = document.createElement("canvas"); c.width = cw; c.height = ch;
+          c.getContext("2d").drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          resolve(c.toDataURL("image/jpeg", 0.82));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Could not read that photo.")); };
+      img.src = url;
+    });
+  }
+
+  /* ---------------- auth ---------------- */
+  function isAuthed() {
+    if (DEMO) return sessionStorage.getItem("pj.demoAuth") === "1";
+    return !!sessionStorage.getItem("pj.liveAuth");
+  }
+  async function liveSession() {
+    if (DEMO) return;
+    try {
+      var s = await D.supabase().auth.getSession();
+      if (s && s.data && s.data.session) sessionStorage.setItem("pj.liveAuth", "1");
+    } catch (e) { /* stay logged out */ }
+  }
+
+  /* ================= OWNER PANEL ================= */
+  var ownerTab = "jobs";
+
+  async function renderOwner() {
+    await liveSession();
+    if (!isAuthed()) return renderLogin();
+    var clients = await D.listClients();
+    var jobs = await D.listJobs();
+    var byClient = {}; clients.forEach(function (c) { byClient[c.id] = c; });
+    var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
+    html += '<nav class="owner-nav">' +
+      '<button data-tab="jobs" class="' + (ownerTab === "jobs" ? "on" : "") + '">Jobs</button>' +
+      '<button data-tab="clients" class="' + (ownerTab === "clients" ? "on" : "") + '">Clients</button>' +
+      '<button data-tab="new" class="' + (ownerTab === "new" ? "on" : "") + '">+ New job</button></nav>';
+    html += '<main class="wrap wide">';
+    if (DEMO) html += '<div class="notice warn"><b>Demo mode:</b> data is stored only in this browser (localStorage) and the signed-copy email is simulated — nothing is sent. Fill in <code>config.js</code> with the Supabase project to go live (see README).</div>';
+    if (ownerTab === "clients") html += clientsHTML(clients, jobs);
+    else if (ownerTab === "new") html += newJobHTML(clients);
+    else html += jobsHTML(jobs, byClient);
+    html += "</main>" + footerHTML();
+    app.innerHTML = html;
+    wireOwner(clients, jobs, byClient);
+  }
+
+  function renderLogin() {
+    app.innerHTML = headerHTML("") +
+      '<main class="wrap"><div class="card"><h2>Owner login</h2>' +
+      (DEMO
+        ? '<p class="muted">Demo mode: use the demo password <b>panda2026</b>. In live mode this becomes your real Supabase Auth login.</p>' +
+          '<label class="f" for="pw">Password</label><input type="password" id="pw" autocomplete="current-password">' +
+          '<div id="loginErr"></div><div class="btn-row"><button class="btn primary" id="loginBtn">Log in</button></div>'
+        : '<label class="f" for="em">Email</label><input type="email" id="em" autocomplete="username">' +
+          '<label class="f" for="pw">Password</label><input type="password" id="pw" autocomplete="current-password">' +
+          '<div id="loginErr"></div><div class="btn-row"><button class="btn primary" id="loginBtn">Log in</button></div>') +
+      "</div></main>" + footerHTML();
+    document.getElementById("loginBtn").addEventListener("click", async function () {
+      var err = document.getElementById("loginErr");
+      if (DEMO) {
+        if (document.getElementById("pw").value === DEMO_PASSWORD) { sessionStorage.setItem("pj.demoAuth", "1"); renderOwner(); }
+        else err.innerHTML = errBox("Wrong password.");
+      } else {
+        try {
+          var r = await D.supabase().auth.signInWithPassword({ email: document.getElementById("em").value.trim(), password: document.getElementById("pw").value });
+          if (r.error) throw r.error;
+          sessionStorage.setItem("pj.liveAuth", "1"); renderOwner();
+        } catch (e) { err.innerHTML = errBox("Login failed: " + (e.message || e)); }
+      }
+    });
+  }
+
+  function jobsHTML(jobs, byClient) {
+    var html = '<div class="pipe">';
+    STAGES.forEach(function (st) {
+      var inStage = jobs.filter(function (j) { return j.status === st[0]; });
+      html += '<section class="stage"><h3>' + st[1] + " (" + inStage.length + ")</h3>";
+      if (!inStage.length) html += '<p class="muted small">No jobs here.</p>';
+      inStage.forEach(function (j) {
+        var c = byClient[j.clientId];
+        html += '<button class="job-card" data-open-job="' + j.id + '"><b>' + esc(j.title || "Untitled job") + "</b>" +
+          "<span>" + esc(c ? c.name : "—") + " • " + money(window.PandaPDF.total(j)) + " • v" + j.version +
+          (j.signedVersion === j.version ? ' • <span class="pill">SIGNED</span>' : "") +
+          (j.copyEmailStatus === "failed" ? ' <span class="pill red">copy email failed</span>' : "") + "</span></button>";
+      });
+      html += "</section>";
+    });
+    return html + "</div>";
+  }
+
+  function clientsHTML(clients, jobs) {
+    var html = '<div class="card"><h2>Clients</h2><div id="clientMsg"></div>';
+    clients.forEach(function (c) {
+      var n = jobs.filter(function (j) { return j.clientId === c.id; }).length;
+      html += '<div class="list-row"><div class="grow"><b>' + esc(c.name) + "</b><br><span class=\"muted small\">" +
+        esc(c.phone || "") + " • " + esc(c.email || "") + "<br>" + esc(c.address || "") + (c.equipment ? "<br>Equipment: " + esc(c.equipment) : "") +
+        (c.notes ? "<br>" + esc(c.notes) : "") + "<br>" + n + " job(s)</span></div>" +
+        '<button class="btn small light" data-edit-client="' + c.id + '">Edit</button>' +
+        '<button class="btn small danger" data-del-client="' + c.id + '">Delete</button></div>';
+    });
+    html += "</div>";
+    html += '<div class="card"><h2 id="clientFormTitle">Add a client</h2>' +
+      '<input type="hidden" id="cf_id">' +
+      '<label class="f">Full name *</label><input type="text" id="cf_name">' +
+      '<label class="f">Phone</label><input type="tel" id="cf_phone">' +
+      '<label class="f">Email * (needed to send quotes and the signed copy)</label><input type="email" id="cf_email">' +
+      '<label class="f">Service address</label><input type="text" id="cf_address">' +
+      '<label class="f">Equipment (brand / model, if known)</label><input type="text" id="cf_equipment">' +
+      '<label class="f">Notes</label><textarea id="cf_notes"></textarea>' +
+      '<div class="btn-row"><button class="btn primary" id="cf_save">Save client</button>' +
+      '<button class="btn light" id="cf_clear">Clear</button></div></div>';
+    return html;
+  }
+
+  function newJobHTML(clients) {
+    if (!clients.length) return '<div class="card"><h2>New job</h2><p>Add a client first (Clients tab), then create the job.</p></div>';
+    var opts = clients.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + " — " + esc(c.email || "no email") + "</option>"; }).join("");
+    return '<div class="card"><h2>New job</h2>' +
+      '<label class="f">Client</label><select id="nj_client">' + opts + "</select>" +
+      '<label class="f">Job title</label><input type="text" id="nj_title" placeholder="e.g. Furnace replacement — no heat">' +
+      '<div class="btn-row"><button class="btn primary" id="nj_create">Create job & build quote</button></div></div>';
+  }
+
+  /* ---------- job detail / quote builder ---------- */
+  async function renderJobDetail(jobId) {
+    var job = await D.getJob(jobId);
+    if (!job) { app.innerHTML = headerHTML("") + '<main class="wrap">' + errBox("Job not found.") + "</main>"; return; }
+    var clients = await D.listClients();
+    var client = clients.filter(function (c) { return c.id === job.clientId; })[0];
+    var sig = signedSig(job);
+    var locked = !!sig && job.signedVersion === job.version;
+    var link = clientLink(job.token);
+    var firstName = client ? (client.name || "").split(" ")[0] : "there";
+    var sendMsg = "Hi " + firstName + ", this is Angry Panda Heating and Cooling. Here is your quote — tap the link to review and sign: " + link;
+    var phoneDigits = client ? String(client.phone || "").replace(/\D/g, "") : "";
+    var phoneIntl = phoneDigits.length === 10 ? "1" + phoneDigits : phoneDigits;
+    var hasPhone = phoneDigits.length >= 10;
+    var storedEmail = client ? (client.email || "") : "";
+    // Recipient for the Email button: last address used on this job
+    // (job.sendEmail) wins, else the client's stored email. Editable per send.
+    var recipientEmail = job.sendEmail || storedEmail;
+    var recipientValid = validEmail(recipientEmail);
+    var smsHref = hasPhone ? "sms:+" + phoneIntl + "?&body=" + encodeURIComponent(sendMsg) : "";
+    var mailHref = recipientValid ? "mailto:" + recipientEmail + "?subject=" + encodeURIComponent("Your quote from Angry Panda Heating and Cooling") + "&body=" + encodeURIComponent(sendMsg) : "";
+    var isDemoLink = DEMO || link.indexOf("localhost") >= 0 || link.indexOf("127.0.0.1") >= 0;
+    var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
+    html += '<main class="wrap wide"><div class="btn-row"><button class="btn light small" id="backBtn">← All jobs</button></div>';
+    html += '<div id="jobMsg"></div>';
+    html += '<div class="card"><h2>' + esc(job.title || "Untitled job") + "</h2>" +
+      '<p class="muted small">Client: <b>' + esc(client ? client.name : "—") + "</b> • " + esc(client ? client.email : "") + " • " + esc(client ? client.phone : "") + "<br>" +
+      esc(client ? client.address : "") + (client && client.equipment ? "<br>Equipment: " + esc(client.equipment) : "") + "</p>" +
+      '<label class="f">Job title</label><input type="text" id="jd_title" value="' + esc(job.title) + '">' +
+      '<label class="f">Status</label><select id="jd_status">' +
+      STAGES.map(function (s) { return '<option value="' + s[0] + '"' + (job.status === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") + "</select>" +
+      '<label class="f">Appointment (date & time)</label><input type="datetime-local" id="jd_sched" value="' + esc(job.scheduledAt || "") + '">' +
+      "</div>";
+
+    /* Quote builder */
+    html += '<div class="card"><h2>Quote / contract — version ' + job.version + "</h2>";
+    if (locked) html += '<div class="notice ok"><b>Signed</b> by ' + esc(sig.name) + " on " + fmtDate(sig.signedAt) + ". This version is locked. Saving any change below creates version " + (job.version + 1) + " and the client must sign again — the signed version stays intact.</div>";
+    else if (sig) html += '<div class="notice warn">Version ' + sig.version + " was <b>signed</b> by " + esc(sig.name) + " on " + fmtDate(sig.signedAt) + " and stays intact. This is version " + job.version + " — <b>not signed yet</b>; the client must sign it from their link.</div>";
+    if (job.copyEmailStatus === "failed") html += '<div class="notice bad"><b>Copy email failed.</b> The signature and PDF are saved; the client can still download the PDF from their portal. Check the client email and re-send from the Documents section.</div>';
+    html += '<div id="qrows">';
+    job.items.forEach(function (it, i) { html += qrowHTML(it, i); });
+    html += "</div>";
+    html += '<button class="btn light small" id="addItem">+ Add line item</button>';
+    html += '<label class="f">Deposit due at signing ($)</label><input type="number" id="jd_deposit" min="0" step="0.01" value="' + (job.deposit || 0) + '">';
+    html += '<p><b>Quote total: <span id="qTotal">' + money(window.PandaPDF.total(job)) + '</span></b> <span class="muted small">(required items + accepted optionals)</span></p>';
+    html += '<details class="ref"><summary>Internal price reference — owner only (never shown to the client)</summary>' +
+      '<p class="small muted">Chicago-area market ranges from the 2026-10-27 competitor research. Orientation only — the final price is always the one Rigo writes in the quote.</p><table><tr><th>Service</th><th>Market range</th></tr>' +
+      REF_RANGES.map(function (r) { return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>"; }).join("") + "</table></details>";
+    html += '<label class="f">Terms & conditions (shown to the client, included in the PDF)</label><textarea id="jd_terms" style="min-height:170px">' + esc(job.terms) + "</textarea>";
+    html += '<div class="btn-row"><button class="btn primary" id="saveQuote">Save quote</button>' +
+      '<button class="btn ghost" id="ownerPdf">Download PDF</button></div>';
+    html += '<h3>Send to client</h3><p class="small muted">Client link (unique, no password). Send it straight from here:</p>' +
+      '<code class="linkbox">' + esc(link) + "</code>";
+    if (isDemoLink) html += '<p class="notice warn" id="demoLinkWarn">Demo link — only opens on this device until the app is deployed.</p>';
+    html += '<label class="f" for="sendEmailTo">Send to email</label>' +
+      '<input type="email" id="sendEmailTo" autocomplete="off" placeholder="name@example.com" value="' + esc(recipientEmail) + '">' +
+      '<p class="small muted" id="sendEmailHint">' + (storedEmail
+        ? "Prefilled with the client's email — change it here if this quote should go to someone else (a spouse, the office, a property manager…)."
+        : "No email on file for this client — type the address to send to here.") + "</p>" +
+      '<a href="#" id="saveClientEmail" class="small"' + (client && recipientValid && recipientEmail !== storedEmail ? "" : ' style="display:none"') + ">Save as client email</a>" +
+      '<div id="sendEmailError"></div>';
+    html += '<div class="btn-row">' +
+      (hasPhone
+        ? '<a class="btn primary" id="sendSms" href="' + esc(smsHref) + '">📱 Text message</a>'
+        : '<a class="btn primary disabled" id="sendSms" aria-disabled="true">📱 Text message</a>') +
+      (recipientValid
+        ? '<a class="btn ghost" id="sendEmail" href="' + esc(mailHref) + '">✉️ Email</a>'
+        : '<a class="btn ghost disabled" id="sendEmail" aria-disabled="true">✉️ Email</a>') +
+      '<button class="btn light" id="copyLink">Copy link</button></div>';
+    if (!hasPhone) html += '<p class="small muted" id="sendPhoneHint">No phone number on file for this client — add one in the Clients tab to enable text message.</p>';
+    html += '<div id="sendLogList">' + sendLogHTML(job) + "</div>";
+    html += '<div class="btn-row"><button class="btn light" id="copySms">Copy ready-to-send text</button>' +
+      '<button class="btn light" id="regenToken">Regenerate link</button></div>' +
+      '<p class="small muted">Regenerating the link makes the old one stop working.</p></div>';
+
+    /* Signatures & documents */
+    html += '<div class="card"><h2>Signatures & documents</h2>';
+    if (!job.signatures.length) html += '<p class="muted">No signatures yet.</p>';
+    job.signatures.slice().reverse().forEach(function (s) {
+      html += '<div class="list-row"><div class="grow"><b>v' + s.version + " — " + esc(s.name) + "</b><br><span class=\"muted small\">" + fmtDate(s.signedAt) + '</span></div><span class="pill">SIGNED</span></div>';
+    });
+    if (job.copyEmailLog && job.copyEmailLog.length) {
+      html += '<h3>Signed-copy email log</h3>' + job.copyEmailLog.map(function (l) {
+        return '<p class="small muted">' + fmtDate(l.at) + " → " + esc(l.to) + ": <b>" + esc(l.status) + "</b>" + (l.note ? " — " + esc(l.note) : "") + "</p>";
+      }).join("");
+    }
+    html += '<div class="btn-row"><button class="btn light" id="docPdf">Download signed PDF</button></div></div>';
+
+    /* Execution */
+    html += '<div class="card"><h2>Job execution</h2>' +
+      '<label class="f">Work performed (summary the client will see)</label><textarea id="jd_notes">' + esc(job.workNotes) + "</textarea>" +
+      '<label class="f">Materials used</label><textarea id="jd_materials">' + esc(job.materials) + "</textarea>" +
+      '<label class="f">Final total ($) — leave empty to use the quote total</label><input type="number" id="jd_final" min="0" step="0.01" value="' + (job.finalTotal == null ? "" : job.finalTotal) + '">' +
+      '<label class="f">Payment</label><select id="jd_pay"><option value="pending"' + (job.paymentStatus === "pending" ? " selected" : "") + '>Pending</option><option value="paid"' + (job.paymentStatus === "paid" ? " selected" : "") + ">Paid</option></select>" +
+      '<div class="btn-row"><button class="btn primary" id="saveExec">Save execution details</button></div>';
+    ["assessment", "before", "after"].forEach(function (kind) {
+      var label = kind === "assessment" ? "Assessment photos" : kind === "before" ? "BEFORE photos" : "AFTER photos";
+      html += "<h3>" + label + '</h3><div class="photo-grid single">' +
+        (job.photos[kind] || []).map(function (p, ix) {
+          return '<figure><img src="' + p + '" alt="' + kind + ' photo"><figcaption>' + kind + " #" + (ix + 1) +
+            ' <button class="btn small danger" data-del-photo="' + kind + ":" + ix + '">Remove</button></figcaption></figure>';
+        }).join("") + "</div>" +
+        '<label class="btn light file-btn" style="margin-top:8px">+ Add ' + kind + ' photo (camera or album)<input type="file" accept="image/*" data-photo-input="' + kind + '"></label>';
+    });
+    html += "</div>";
+    html += '<div class="card"><button class="btn danger" id="delJob">Delete this job</button></div>';
+    html += "</main>" + footerHTML();
+    app.innerHTML = html;
+    wireJobDetail(job, client, link, sendMsg);
+  }
+
+  function qrowHTML(it, i) {
+    return '<div class="qrow" data-qrow="' + i + '">' +
+      '<input type="text" data-f="desc" placeholder="Description" value="' + esc(it.desc) + '">' +
+      '<input type="number" data-f="qty" min="0" step="1" value="' + it.qty + '">' +
+      '<input type="number" data-f="price" min="0" step="0.01" value="' + it.price + '">' +
+      '<span class="small muted" data-line-total>' + money(it.qty * it.price) + "</span>" +
+      '<button class="del" data-del-item="' + i + '" title="Remove item">×</button>' +
+      '<label class="opt-toggle"><input type="checkbox" data-f="optional"' + (it.optional ? " checked" : "") + "> Optional item (client can accept/decline)" +
+      ' &nbsp; <input type="checkbox" data-f="accepted"' + (it.accepted ? " checked" : "") + "> Accepted</label></div>";
+  }
+
+  function readQuoteFromForm(job) {
+    job.title = document.getElementById("jd_title").value.trim();
+    job.status = document.getElementById("jd_status").value;
+    job.scheduledAt = document.getElementById("jd_sched").value;
+    job.deposit = parseFloat(document.getElementById("jd_deposit").value) || 0;
+    job.terms = document.getElementById("jd_terms").value;
+    var rows = document.querySelectorAll("[data-qrow]");
+    var items = [];
+    rows.forEach(function (row) {
+      items.push({
+        desc: row.querySelector('[data-f="desc"]').value,
+        qty: parseFloat(row.querySelector('[data-f="qty"]').value) || 0,
+        price: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
+        optional: row.querySelector('[data-f="optional"]').checked,
+        accepted: row.querySelector('[data-f="accepted"]').checked
+      });
+    });
+    job.items = items;
+    return job;
+  }
+  function quoteChanged(a, b) { return JSON.stringify(a) !== JSON.stringify(b); }
+
+  function wireJobDetail(job, client, link, sendMsg) {
+    var msg = document.getElementById("jobMsg");
+    /* Direct-send logging: records the channel on the job (fresh copy, so
+       unsaved form edits and signed versions are never clobbered) and, while
+       the job is still a draft, advances it to the "Quote sent" stage. The
+       DOM is updated in place — no re-render — so the send link's default
+       action (opening the messaging/mail app) is never interrupted. */
+    async function logSend(channel, recipient) {
+      try {
+        var fresh = (await D.getJob(job.id)) || job;
+        fresh.sendLog = fresh.sendLog || [];
+        var entry = { channel: channel, at: new Date().toISOString() };
+        if (channel === "Email" && recipient) { entry.to = recipient; fresh.sendEmail = recipient; }
+        fresh.sendLog.push(entry);
+        if (fresh.status === "draft") fresh.status = "quote";
+        await D.saveJob(fresh);
+        job.sendLog = fresh.sendLog; job.status = fresh.status; job.sendEmail = fresh.sendEmail;
+        var sel = document.getElementById("jd_status"); if (sel) sel.value = job.status;
+        var box = document.getElementById("sendLogList"); if (box) box.innerHTML = sendLogHTML(job);
+      } catch (e) { msg.innerHTML = errBox("Could not record the send: " + (e.message || e)); }
+    }
+    document.getElementById("backBtn").addEventListener("click", function () { ownerTab = "jobs"; renderOwner(); });
+    document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    document.getElementById("addItem").addEventListener("click", async function () {
+      readQuoteFromForm(job); job.items.push({ desc: "", qty: 1, price: 0, optional: false, accepted: true });
+      await D.saveJob(job); renderJobDetail(job.id);
+    });
+    app.addEventListener("input", recalcTotals);
+    document.querySelectorAll("[data-del-item]").forEach(function (b) {
+      b.addEventListener("click", async function () { readQuoteFromForm(job); job.items.splice(+b.getAttribute("data-del-item"), 1); await D.saveJob(job); renderJobDetail(job.id); });
+    });
+    document.getElementById("saveQuote").addEventListener("click", async function () {
+      var before = JSON.stringify({ i: job.items, d: job.deposit, t: job.terms, ti: job.title });
+      readQuoteFromForm(job);
+      var after = JSON.stringify({ i: job.items, d: job.deposit, t: job.terms, ti: job.title });
+      if (job.signedVersion === job.version && quoteChanged(before, after)) {
+        job.version += 1; // signed version stays locked; new version needs a new signature
+        msg.innerHTML = '<div class="notice warn">Saved as <b>version ' + job.version + "</b>. The previously signed version is unchanged; the client must sign the new version.</div>";
+      } else {
+        msg.innerHTML = '<div class="notice ok">Quote saved.</div>';
+      }
+      await D.saveJob(job); window.scrollTo(0, 0);
+      setTimeout(function () { renderJobDetail(job.id); }, 900);
+    });
+    document.getElementById("ownerPdf").addEventListener("click", async function () {
+      readQuoteFromForm(job);
+      await window.PandaPDF.download(job, client, { filename: "angry-panda-quote-v" + job.version + ".pdf" });
+    });
+    document.getElementById("docPdf").addEventListener("click", async function () {
+      if (!job.signatures.length) { msg.innerHTML = errBox("No signature yet — the signed PDF is generated when the client signs."); return; }
+      var sig = signedSig(job) || job.signatures[job.signatures.length - 1];
+      await window.PandaPDF.download(job, client, { version: sig.version, filename: "angry-panda-signed-v" + sig.version + ".pdf" });
+    });
+    document.getElementById("copyLink").addEventListener("click", function () { copyText(link, this); });
+    document.getElementById("copySms").addEventListener("click", function () { copyText(sendMsg, this); });
+    var smsEl = document.getElementById("sendSms");
+    if (smsEl && !smsEl.classList.contains("disabled")) smsEl.addEventListener("click", function () { logSend("Text message"); });
+    /* Editable recipient email: the Email button always uses the address
+       currently typed in #sendEmailTo — prefilled with job.sendEmail (last
+       used on this job) or the client's stored email, and overwritable per
+       send (spouse, office, property manager…). Typing a valid address
+       enables the button live; an invalid one shows an error and the click
+       guard below makes sure nothing is sent or logged. */
+    var emailField = document.getElementById("sendEmailTo");
+    var emailBtn = document.getElementById("sendEmail");
+    var emailErr = document.getElementById("sendEmailError");
+    var saveEmailLink = document.getElementById("saveClientEmail");
+    function mailHrefFor(addr) {
+      return "mailto:" + addr + "?subject=" + encodeURIComponent("Your quote from Angry Panda Heating and Cooling") + "&body=" + encodeURIComponent(sendMsg);
+    }
+    function refreshEmailUI(showErr) {
+      if (!emailField || !emailBtn) return;
+      var addr = emailField.value.trim();
+      var ok = validEmail(addr);
+      if (ok) { emailBtn.setAttribute("href", mailHrefFor(addr)); emailBtn.classList.remove("disabled"); emailBtn.removeAttribute("aria-disabled"); }
+      else { emailBtn.removeAttribute("href"); emailBtn.classList.add("disabled"); emailBtn.setAttribute("aria-disabled", "true"); }
+      if (emailErr) emailErr.innerHTML = (showErr && addr && !ok) ? errBox("That doesn't look like a valid email address — check it before sending. Nothing was sent.") : (ok || !addr ? "" : emailErr.innerHTML);
+      if (saveEmailLink) saveEmailLink.style.display = (client && ok && addr !== (client.email || "")) ? "" : "none";
+    }
+    if (emailField) {
+      emailField.addEventListener("input", function () { refreshEmailUI(false); });
+      emailField.addEventListener("change", async function () {
+        refreshEmailUI(true);
+        try {
+          var fresh = (await D.getJob(job.id)) || job;
+          fresh.sendEmail = emailField.value.trim();
+          await D.saveJob(fresh);
+          job.sendEmail = fresh.sendEmail;
+        } catch (e) { /* non-fatal: the send click persists it too */ }
+      });
+    }
+    if (emailBtn) emailBtn.addEventListener("click", function (e) {
+      var addr = emailField ? emailField.value.trim() : "";
+      if (!validEmail(addr)) {
+        e.preventDefault();
+        if (emailErr) emailErr.innerHTML = errBox("Type a valid email address in “Send to email” first (e.g. name@example.com) — nothing was sent.");
+        return;
+      }
+      if (emailErr) emailErr.innerHTML = "";
+      emailBtn.setAttribute("href", mailHrefFor(addr));
+      logSend("Email", addr);
+    });
+    if (saveEmailLink) saveEmailLink.addEventListener("click", async function (e) {
+      e.preventDefault();
+      var addr = emailField ? emailField.value.trim() : "";
+      if (!client || !validEmail(addr)) return;
+      try {
+        await D.saveClient(Object.assign({}, client, { email: addr }));
+        client.email = addr;
+        refreshEmailUI(false);
+        msg.innerHTML = '<div class="notice ok">Client email updated to ' + esc(addr) + ".</div>";
+      } catch (err2) { msg.innerHTML = errBox("Could not update the client email: " + (err2.message || err2)); }
+    });
+    document.getElementById("regenToken").addEventListener("click", async function () {
+      if (!confirm("Regenerate the client link? The old link will stop working.")) return;
+      job.token = D.newToken(); await D.saveJob(job); renderJobDetail(job.id);
+    });
+    document.getElementById("saveExec").addEventListener("click", async function () {
+      job.workNotes = document.getElementById("jd_notes").value;
+      job.materials = document.getElementById("jd_materials").value;
+      var f = document.getElementById("jd_final").value;
+      job.finalTotal = f === "" ? null : parseFloat(f);
+      job.paymentStatus = document.getElementById("jd_pay").value;
+      job.status = document.getElementById("jd_status").value;
+      job.scheduledAt = document.getElementById("jd_sched").value;
+      await D.saveJob(job);
+      msg.innerHTML = '<div class="notice ok">Execution details saved — the client portal is updated.</div>'; window.scrollTo(0, 0);
+    });
+    document.querySelectorAll("[data-photo-input]").forEach(function (inp) {
+      inp.addEventListener("change", async function () {
+        var file = inp.files && inp.files[0]; if (!file) return;
+        var kind = inp.getAttribute("data-photo-input");
+        try {
+          var dataUrl = await processPhotoFile(file);
+          await D.addPhoto(job.id, kind, dataUrl);
+          renderJobDetail(job.id);
+        } catch (e) { msg.innerHTML = errBox("Photo upload failed: " + (e.message || e)); }
+      });
+    });
+    document.querySelectorAll("[data-del-photo]").forEach(function (b) {
+      b.addEventListener("click", async function () {
+        var parts = b.getAttribute("data-del-photo").split(":");
+        await D.removePhoto(job.id, parts[0], +parts[1]); renderJobDetail(job.id);
+      });
+    });
+    document.getElementById("delJob").addEventListener("click", async function () {
+      if (!confirm("Delete this job and its data? This cannot be undone.")) return;
+      await D.deleteJob(job.id); ownerTab = "jobs"; renderOwner();
+    });
+  }
+  function recalcTotals() {
+    var tot = document.getElementById("qTotal"); if (!tot) return;
+    var sum = 0;
+    document.querySelectorAll("[data-qrow]").forEach(function (row) {
+      var q = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
+      var p = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
+      var lt = row.querySelector("[data-line-total]"); if (lt) lt.textContent = money(q * p);
+      if (!row.querySelector('[data-f="optional"]').checked || row.querySelector('[data-f="accepted"]').checked) sum += q * p;
+    });
+    tot.textContent = money(sum);
+  }
+  function copyText(t, btn) {
+    function done() { var old = btn.textContent; btn.textContent = "Copied ✓"; setTimeout(function () { btn.textContent = old; }, 1600); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done);
+    else { var ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e) {} ta.remove(); done(); }
+  }
+  async function doLogout() {
+    sessionStorage.removeItem("pj.demoAuth"); sessionStorage.removeItem("pj.liveAuth");
+    if (!DEMO) { try { await D.supabase().auth.signOut(); } catch (e) {} }
+    renderLogin();
+  }
+
+  function wireOwner(clients, jobs, byClient) {
+    document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    document.querySelectorAll("[data-tab]").forEach(function (b) {
+      b.addEventListener("click", function () { ownerTab = b.getAttribute("data-tab"); renderOwner(); });
+    });
+    document.querySelectorAll("[data-open-job]").forEach(function (b) {
+      b.addEventListener("click", function () { renderJobDetail(b.getAttribute("data-open-job")); });
+    });
+    var saveBtn = document.getElementById("cf_save");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async function () {
+        var c = {
+          id: document.getElementById("cf_id").value || undefined,
+          name: document.getElementById("cf_name").value.trim(),
+          phone: document.getElementById("cf_phone").value.trim(),
+          email: document.getElementById("cf_email").value.trim(),
+          address: document.getElementById("cf_address").value.trim(),
+          equipment: document.getElementById("cf_equipment").value.trim(),
+          notes: document.getElementById("cf_notes").value.trim()
+        };
+        var m = document.getElementById("clientMsg");
+        if (!c.name) { m.innerHTML = errBox("The client's name is required."); return; }
+        if (!c.email) { m.innerHTML = errBox("The client's email is required — the signed copy is emailed automatically."); return; }
+        await D.saveClient(c); renderOwner();
+      });
+      document.getElementById("cf_clear").addEventListener("click", function () { renderOwner(); });
+      document.querySelectorAll("[data-edit-client]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var c = clients.filter(function (x) { return x.id === b.getAttribute("data-edit-client"); })[0]; if (!c) return;
+          document.getElementById("cf_id").value = c.id;
+          document.getElementById("cf_name").value = c.name || "";
+          document.getElementById("cf_phone").value = c.phone || "";
+          document.getElementById("cf_email").value = c.email || "";
+          document.getElementById("cf_address").value = c.address || "";
+          document.getElementById("cf_equipment").value = c.equipment || "";
+          document.getElementById("cf_notes").value = c.notes || "";
+          document.getElementById("clientFormTitle").textContent = "Edit client";
+          window.scrollTo(0, document.body.scrollHeight);
+        });
+      });
+      document.querySelectorAll("[data-del-client]").forEach(function (b) {
+        b.addEventListener("click", async function () {
+          if (!confirm("Delete this client AND all their jobs? This cannot be undone.")) return;
+          await D.deleteClient(b.getAttribute("data-del-client")); renderOwner();
+        });
+      });
+    }
+    var nj = document.getElementById("nj_create");
+    if (nj) nj.addEventListener("click", async function () {
+      var job = D.newJob(document.getElementById("nj_client").value);
+      job.title = document.getElementById("nj_title").value.trim();
+      await D.saveJob(job); renderJobDetail(job.id);
+    });
+  }
+
+  /* ================= CLIENT PORTAL ================= */
+  async function renderClient(token) {
+    var job = await D.getJobByToken(token);
+    if (!job) {
+      app.innerHTML = headerHTML("") +
+        '<main class="wrap"><div class="card center"><img src="assets/logo.png" alt="" style="width:84px">' +
+        "<h2>This link is not valid</h2>" +
+        '<p class="muted">This link may be old or incomplete. Please contact Angry Panda Heating and Cooling and we will send you a fresh link right away.</p>' +
+        '<div class="btn-row"><a class="btn primary" href="tel:+14356806873">Call (435) 680-6873</a>' +
+        '<a class="btn ghost" href="sms:+14356806873">Text us</a></div></div></main>' + footerHTML();
+      return;
+    }
+    var client = null;
+    if (DEMO) {
+      var clients = await D.listClients();
+      client = clients.filter(function (c) { return c.id === job.clientId; })[0] || null;
+    } else if (job.client) { client = job.client; }
+    var sig = signedSig(job);
+    // "Signed" applies to the CURRENT version only: if the owner edited the
+    // quote after signing, the portal must ask for a fresh signature on the
+    // new version while the old signed version stays intact.
+    var alreadySigned = !!sig && job.signedVersion === job.version;
+    var prevSig = (!alreadySigned && sig) ? sig : null;
+    var beforePhotos = job.photos.before || [], afterPhotos = job.photos.after || [], assessPhotos = job.photos.assessment || [];
+
+    var html = '<div class="client-head"><img src="assets/logo.png" alt="Angry Panda Heating and Cooling logo">' +
+      "<h1>Angry Panda Heating and Cooling</h1>" +
+      "<p>Heating • Air Conditioning • Water Heaters</p><p>" + esc(COMPANY.cert) + " • Chicago, IL</p></div>";
+    html += '<main class="wrap">';
+    html += '<div class="btn-row"><a class="btn primary" href="tel:+14356806873">📞 Call (435) 680-6873</a>' +
+      '<a class="btn ghost" href="sms:+14356806873?&body=Hi%2C%20I%20need%20help%20with%20my%20heating%2FAC%20unit.">💬 Text us</a></div>';
+    html += statusTimeline(job);
+    if (job.scheduledAt) html += '<div class="notice ok center">📅 Your appointment: <b>' + fmtDate(job.scheduledAt) + "</b></div>";
+    if (job.copyEmailStatus === "failed" && alreadySigned) html += '<div class="notice warn">We could not email your signed copy — you can download it below, it is saved and valid.</div>';
+
+    /* Quote card */
+    html += '<section class="card"><h2>' + (alreadySigned ? "Your signed agreement" : "Your quote") + (job.title ? " — " + esc(job.title) : "") + "</h2>";
+    html += '<p class="muted small">Prepared for ' + esc(client ? client.name : "you") + " • Quote version " + job.version + "</p>";
+    if (prevSig) html += '<div class="notice warn">You signed version ' + prevSig.version + " on " + fmtDate(prevSig.signedAt) + ". This quote was updated to <b>version " + job.version + "</b> — please review the changes and sign the new version below. Your signed version " + prevSig.version + " stays on file, unchanged.</div>";
+    html += '<table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr>';
+    job.items.forEach(function (it, i) {
+      if (it.optional) {
+        html += '<tr class="opt-row"><td><label class="check" style="margin:0"><input type="checkbox" data-opt="' + i + '"' +
+          (it.accepted ? " checked" : "") + (alreadySigned ? " disabled" : "") + "><span><b>Optional:</b> " + esc(it.desc) + "</span></label></td>" +
+          '<td class="num">' + it.qty + '</td><td class="num">' + money(it.qty * it.price) + "</td></tr>";
+      } else {
+        html += "<tr><td>" + esc(it.desc) + '</td><td class="num">' + it.qty + '</td><td class="num">' + money(it.qty * it.price) + "</td></tr>";
+      }
+    });
+    html += '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num" id="cTotal">' + money(job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job)) + "</td></tr></table>";
+    if (job.deposit) html += '<p class="small muted">Deposit due at signing: <b>' + money(job.deposit) + "</b> • Balance due on completion.</p>";
+    html += "</section>";
+
+    if (assessPhotos.length) {
+      html += '<section class="card"><h2>Assessment photos</h2><div class="photo-grid">' +
+        assessPhotos.map(function (p, i) { return '<figure><img src="' + p + '" alt="Assessment photo ' + (i + 1) + '"></figure>'; }).join("") + "</div></section>";
+    }
+
+    /* Terms + signature */
+    html += '<section class="card"><h2>Terms &amp; conditions</h2><div class="small" style="white-space:pre-wrap">' + esc(job.terms) + "</div>";
+    if (alreadySigned) {
+      html += '<div class="sig-locked"><p><b>✓ Signed</b> by ' + esc(sig.name) + "<br><span class=\"muted small\">" + fmtDate(sig.signedAt) + "</span></p>" +
+        '<img src="' + sig.signatureDataUrl + '" alt="Client signature"></div>';
+      html += '<p class="small muted">A copy of your signed agreement was sent to your email automatically.</p>';
+      html += '<div class="btn-row"><button class="btn primary" id="dlSigned">Download my signed PDF</button></div>';
+    } else {
+      html += '<div id="signMsg"></div>' +
+        '<label class="f">Your full name (printed)</label><input type="text" id="sigName" autocomplete="name" placeholder="e.g. Maria Lopez">' +
+        '<label class="f">Sign with your finger or mouse</label>' +
+        '<div class="sig-wrap"><canvas class="sig" id="sigPad" width="640" height="190"></canvas><div class="sig-hint" id="sigHint">Sign here</div></div>' +
+        '<div class="btn-row"><button class="btn light small" id="sigClear">Clear signature</button></div>' +
+        '<label class="check"><input type="checkbox" id="agree"><span>I agree to the terms above and authorize Angry Panda Heating and Cooling to perform the work in this quote.</span></label>' +
+        '<div class="btn-row"><button class="btn primary" id="signBtn">Sign &amp; accept</button></div>' +
+        '<p class="small muted">When you sign, your signed copy is emailed to you automatically, and a copy goes to Angry Panda.</p>';
+    }
+    html += "</section>";
+
+    /* Progress: before / after + summary */
+    if (beforePhotos.length || afterPhotos.length || job.workNotes || job.status === "done" || job.status === "invoiced") {
+      html += '<section class="card"><h2>Your job</h2>';
+      html += '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
+        (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p>";
+      if (job.workNotes) html += "<h3>What we did</h3><p style=\"white-space:pre-wrap\">" + esc(job.workNotes) + "</p>";
+      if (job.materials) html += "<h3>Materials used</h3><p style=\"white-space:pre-wrap\">" + esc(job.materials) + "</p>";
+      html += '<div class="photo-grid">';
+      html += "<figure>" + (beforePhotos[0] ? '<img src="' + beforePhotos[0] + '" alt="Before photo">' : '<div class="empty-ph">Before photo coming soon</div>') + "<figcaption><b>Before</b></figcaption></figure>";
+      html += "<figure>" + (afterPhotos[0] ? '<img src="' + afterPhotos[0] + '" alt="After photo">' : '<div class="empty-ph">After photo coming soon</div>') + "<figcaption><b>After</b></figcaption></figure>";
+      html += "</div>";
+      if (beforePhotos.length > 1 || afterPhotos.length > 1) {
+        html += '<div class="photo-grid" style="margin-top:10px">' +
+          beforePhotos.slice(1).map(function (p, i) { return '<figure><img src="' + p + '" alt="Before photo ' + (i + 2) + '"><figcaption>Before</figcaption></figure>'; }).join("") +
+          afterPhotos.slice(1).map(function (p, i) { return '<figure><img src="' + p + '" alt="After photo ' + (i + 2) + '"><figcaption>After</figcaption></figure>'; }).join("") + "</div>";
+      }
+      if (alreadySigned) html += '<div class="btn-row"><button class="btn ghost" id="dlSigned2">Download my signed PDF</button></div>';
+      html += "</section>";
+    }
+    html += "</main>" + footerHTML();
+    app.innerHTML = html;
+    wireClient(job, client, alreadySigned);
+  }
+
+  function wireClient(job, client, alreadySigned) {
+    function download() {
+      var sig = signedSig(job) || job.signatures[job.signatures.length - 1];
+      window.PandaPDF.download(job, client, { version: sig ? sig.version : job.version, filename: "angry-panda-signed-agreement.pdf" });
+    }
+    var d1 = document.getElementById("dlSigned"); if (d1) d1.addEventListener("click", download);
+    var d2 = document.getElementById("dlSigned2"); if (d2) d2.addEventListener("click", download);
+
+    /* Optional items: update total live; locked after signing */
+    document.querySelectorAll("[data-opt]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        job.items[+cb.getAttribute("data-opt")].accepted = cb.checked;
+        var el = document.getElementById("cTotal");
+        if (el && job.finalTotal == null) el.textContent = money(window.PandaPDF.total(job));
+      });
+    });
+    if (alreadySigned) return;
+
+    /* Signature pad — pointer events (finger on iOS, mouse on PC) */
+    var canvas = document.getElementById("sigPad");
+    var ctx = canvas.getContext("2d");
+    var drawing = false, hasInk = false, last = null;
+    function resizePad() {
+      var data = hasInk ? canvas.toDataURL() : null;
+      var rect = canvas.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rect.width * dpr); canvas.height = Math.round(190 * dpr);
+      ctx.lineWidth = 2.4 * dpr; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#14261a";
+      if (data) { var im = new Image(); im.onload = function () { ctx.drawImage(im, 0, 0, canvas.width, canvas.height); }; im.src = data; }
+    }
+    resizePad();
+    window.addEventListener("resize", resizePad);
+    function pos(e) { var r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) }; }
+    canvas.addEventListener("pointerdown", function (e) { e.preventDefault(); drawing = true; last = pos(e); try { canvas.setPointerCapture(e.pointerId); } catch (err) {} });
+    canvas.addEventListener("pointermove", function (e) {
+      if (!drawing) return; e.preventDefault();
+      var p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p;
+      if (!hasInk) { hasInk = true; var h = document.getElementById("sigHint"); if (h) h.style.display = "none"; }
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { canvas.addEventListener(ev, function () { drawing = false; }); });
+    document.getElementById("sigClear").addEventListener("click", function () {
+      ctx.clearRect(0, 0, canvas.width, canvas.height); hasInk = false;
+      var h = document.getElementById("sigHint"); if (h) h.style.display = "";
+    });
+
+    document.getElementById("signBtn").addEventListener("click", async function () {
+      var msg = document.getElementById("signMsg");
+      var name = document.getElementById("sigName").value.trim();
+      var agree = document.getElementById("agree").checked;
+      if (!hasInk) { msg.innerHTML = errBox("Please sign in the box above — your signature is required."); canvas.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+      if (!name) { msg.innerHTML = errBox("Please type your full name."); return; }
+      if (!agree) { msg.innerHTML = errBox("Please check “I agree to the terms” to continue."); return; }
+      var btn = this; btn.disabled = true; btn.textContent = "Signing…";
+      try {
+        var acceptedIdx = [];
+        job.items.forEach(function (it, i) { if (it.optional && it.accepted) acceptedIdx.push(i); });
+        var sigUrl = canvas.toDataURL("image/png");
+        if (DEMO) {
+          job = await D.signJob(job.token, { name: name, signatureDataUrl: sigUrl, acceptedOptionals: acceptedIdx });
+        } else {
+          await D.signJob(job.token, { name: name, signatureDataUrl: sigUrl, acceptedOptionals: acceptedIdx });
+          job = await D.getJobByToken(job.token);
+        }
+        /* Signed PDF -> stored document; demo simulates the automatic email. */
+        var sig = signedSig(job);
+        var pdfUrl = await window.PandaPDF.dataUrl(job, client, { version: sig ? sig.version : job.version });
+        await D.saveDocument(job.id, { version: sig ? sig.version : job.version, pdfDataUrl: pdfUrl });
+        job = (await D.getJobByToken(job.token)) || job;
+        renderClient(job.token);
+        window.scrollTo(0, 0);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Sign & accept";
+        msg.innerHTML = errBox("Something went wrong while signing: " + (e.message || e) + " — please try again or call us.");
+      }
+    });
+  }
+
+  /* ================= ROUTER ================= */
+  function route() {
+    var h = location.hash || "#/";
+    var m = h.match(/^#\/c\/(.+)$/);
+    app.innerHTML = '<div class="loading">Loading Panda Jobs…</div>';
+    if (m) renderClient(decodeURIComponent(m[1]));
+    else renderOwner();
+  }
+  window.addEventListener("hashchange", route);
+  route();
+})();
