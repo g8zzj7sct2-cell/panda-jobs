@@ -134,6 +134,7 @@
 
   /* ================= OWNER PANEL ================= */
   var ownerTab = "jobs";
+  var boardFilter = "all"; // Jobs board: "all" or one stage key (chips)
 
   async function renderOwner() {
     await liveSession();
@@ -187,21 +188,37 @@
     });
   }
 
+  /* Jobs board, simplified: one row of stage chips (with counts) filters
+     the list; empty stages disappear in the "All" view instead of showing
+     seven "No jobs here" boxes. Job cards also show the appointment. */
   function jobsHTML(jobs, byClient) {
-    var html = '<div class="pipe">';
+    var counts = {};
+    STAGES.forEach(function (st) { counts[st[0]] = jobs.filter(function (j) { return j.status === st[0]; }).length; });
+    var html = '<div class="chips">' +
+      '<button class="chip' + (boardFilter === "all" ? " on" : "") + '" data-board-filter="all">All <b>' + jobs.length + "</b></button>" +
+      STAGES.map(function (st) {
+        return '<button class="chip' + (boardFilter === st[0] ? " on" : "") + '" data-board-filter="' + st[0] + '"><span class="dot d-' + st[0] + '"></span>' + st[1] + " <b>" + counts[st[0]] + "</b></button>";
+      }).join("") + "</div>";
+    html += '<div class="pipe">';
     STAGES.forEach(function (st) {
+      if (boardFilter !== "all" && boardFilter !== st[0]) return;
       var inStage = jobs.filter(function (j) { return j.status === st[0]; });
-      html += '<section class="stage"><h3>' + st[1] + " (" + inStage.length + ")</h3>";
-      if (!inStage.length) html += '<p class="muted small">No jobs here.</p>';
+      if (!inStage.length) {
+        if (boardFilter !== "all") html += '<section class="stage s-' + st[0] + '"><h3>' + st[1] + ' (0)</h3><p class="muted small">No jobs here yet.</p></section>';
+        return;
+      }
+      html += '<section class="stage s-' + st[0] + '"><h3>' + st[1] + " (" + inStage.length + ")</h3>";
       inStage.forEach(function (j) {
         var c = byClient[j.clientId];
         html += '<button class="job-card" data-open-job="' + j.id + '"><b>' + esc(j.title || "Untitled job") + "</b>" +
           "<span>" + esc(c ? c.name : "—") + " • " + money(window.PandaPDF.total(j)) + " • v" + j.version +
           (j.signedVersion === j.version ? ' • <span class="pill">SIGNED</span>' : "") +
-          (j.copyEmailStatus === "failed" ? ' <span class="pill red">copy email failed</span>' : "") + "</span></button>";
+          (j.copyEmailStatus === "failed" ? ' <span class="pill red">copy email failed</span>' : "") + "</span>" +
+          (j.scheduledAt ? '<span class="appt-line">📅 ' + fmtDate(j.scheduledAt) + "</span>" : "") + "</button>";
       });
       html += "</section>";
     });
+    if (!jobs.length) html += '<div class="stage empty-board"><img src="assets/logo.png" alt=""><p class="muted">No jobs yet — create the first one with <b>+ New job</b>.</p></div>';
     return html + "</div>";
   }
 
@@ -263,17 +280,17 @@
     var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
     html += '<main class="wrap wide"><div class="btn-row"><button class="btn light small" id="backBtn">← All jobs</button></div>';
     html += '<div id="jobMsg"></div>';
-    html += '<div class="card"><h2>' + esc(job.title || "Untitled job") + "</h2>" +
+    html += '<div class="card job-head"><h2>' + esc(job.title || "Untitled job") + "</h2>" +
       '<p class="muted small">Client: <b>' + esc(client ? client.name : "—") + "</b> • " + esc(client ? client.email : "") + " • " + esc(client ? client.phone : "") + "<br>" +
       esc(client ? client.address : "") + (client && client.equipment ? "<br>Equipment: " + esc(client.equipment) : "") + "</p>" +
       '<label class="f">Job title</label><input type="text" id="jd_title" value="' + esc(job.title) + '">' +
       '<label class="f">Status</label><select id="jd_status">' +
       STAGES.map(function (s) { return '<option value="' + s[0] + '"' + (job.status === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") + "</select>" +
-      '<label class="f">Appointment (date & time)</label><input type="datetime-local" id="jd_sched" value="' + esc(job.scheduledAt || "") + '">' +
       "</div>";
 
-    /* Quote builder */
-    html += '<div class="card"><h2>Quote / contract — version ' + job.version + "</h2>";
+    /* Quote builder — STEP 1 of the simplified detail flow:
+       1 Quote → 2 Send → 3 Schedule, work & photos. */
+    html += '<div class="card step"><h2><span class="stepn">1</span>Quote / contract — version ' + job.version + "</h2>";
     if (locked) html += '<div class="notice ok"><b>Signed</b> by ' + esc(sig.name) + " on " + fmtDate(sig.signedAt) + ". This version is locked. Saving any change below creates version " + (job.version + 1) + " and the client must sign again — the signed version stays intact.</div>";
     else if (sig) html += '<div class="notice warn">Version ' + sig.version + " was <b>signed</b> by " + esc(sig.name) + " on " + fmtDate(sig.signedAt) + " and stays intact. This is version " + job.version + " — <b>not signed yet</b>; the client must sign it from their link.</div>";
     if (job.copyEmailStatus === "failed") html += '<div class="notice bad"><b>Copy email failed.</b> The signature and PDF are saved; the client can still download the PDF from their portal. Check the client email and re-send from the Documents section.</div>';
@@ -286,10 +303,10 @@
     html += '<details class="ref"><summary>Internal price reference — owner only (never shown to the client)</summary>' +
       '<p class="small muted">Chicago-area market ranges from the 2026-10-27 competitor research. Orientation only — the final price is always the one Rigo writes in the quote.</p><table><tr><th>Service</th><th>Market range</th></tr>' +
       REF_RANGES.map(function (r) { return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>"; }).join("") + "</table></details>";
-    html += '<label class="f">Terms & conditions (shown to the client, included in the PDF)</label><textarea id="jd_terms" style="min-height:170px">' + esc(job.terms) + "</textarea>";
+    html += '<details class="ref"><summary>Terms &amp; conditions — shown to the client, included in the PDF</summary><textarea id="jd_terms" style="min-height:170px;margin-top:10px">' + esc(job.terms) + "</textarea></details>";
     html += '<div class="btn-row"><button class="btn primary" id="saveQuote">Save quote</button>' +
-      '<button class="btn ghost" id="ownerPdf">Download PDF</button></div>';
-    html += '<h3>Send to client</h3><p class="small muted">Client link (unique, no password). Send it straight from here:</p>' +
+      '<button class="btn ghost" id="ownerPdf">Download PDF</button></div></div>';
+    html += '<div class="card step"><h2><span class="stepn">2</span>Send to client</h2><p class="small muted">Client link (unique, no password). Send it straight from here:</p>' +
       '<code class="linkbox">' + esc(link) + "</code>";
     if (isDemoLink) html += '<p class="notice warn" id="demoLinkWarn">Demo link — only opens on this device until the app is deployed.</p>';
     html += '<label class="f" for="sendEmailTo">Send to email</label>' +
@@ -343,8 +360,12 @@
     }
     html += '<div class="btn-row"><button class="btn light" id="docPdf">Download signed PDF</button></div></div>';
 
-    /* Execution */
-    html += '<div class="card"><h2>Work, photos &amp; completion</h2>' +
+    /* Execution — STEP 3: the appointment lives here now, next to the
+       work it schedules (it used to be lost in the header card). */
+    html += '<div class="card step"><h2><span class="stepn">3</span>Schedule, work &amp; photos</h2>' +
+      '<div class="appt-box"><label class="f" style="margin-top:0">📅 Appointment (date &amp; time)</label>' +
+      '<input type="datetime-local" id="jd_sched" value="' + esc(job.scheduledAt || "") + '">' +
+      '<p class="small muted" style="margin:6px 0 0">The day and time of the installation or work — the client sees it in their link. Saved by the button below.</p></div>' +
       '<label class="f">Work performed (summary the client will see)</label><textarea id="jd_notes">' + esc(job.workNotes) + "</textarea>" +
       '<label class="f">Materials used</label><textarea id="jd_materials">' + esc(job.materials) + "</textarea>" +
       '<label class="f">Final total ($) — leave empty to use the quote total</label><input type="number" id="jd_final" min="0" step="0.01" value="' + (job.finalTotal == null ? "" : job.finalTotal) + '">' +
@@ -809,6 +830,9 @@
     });
     document.querySelectorAll("[data-open-job]").forEach(function (b) {
       b.addEventListener("click", function () { renderJobDetail(b.getAttribute("data-open-job")); });
+    });
+    document.querySelectorAll("[data-board-filter]").forEach(function (b) {
+      b.addEventListener("click", function () { boardFilter = b.getAttribute("data-board-filter"); renderOwner(); });
     });
     var saveBtn = document.getElementById("cf_save");
     if (saveBtn) {

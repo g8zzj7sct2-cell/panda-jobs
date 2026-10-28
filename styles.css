@@ -1,10 +1,15 @@
 /* Panda Jobs — styles. Mobile-first, responsive to desktop. */
 :root{
+  /* Palette (2026-10-27 refresh): deep panda green + heat amber/orange +
+     cooling sky — an HVAC story in colors, kept bold but readable. */
   --green:#14532d; --green2:#16a34a; --green-soft:#e8f5ec;
+  --amber:#f59e0b; --orange:#ea580c; --sky:#0284c7; --sky-soft:#e8f4fd;
+  --violet:#7c3aed; --teal:#0d9488; --slate:#64748b;
   --ink:#1c2321; --muted:#5f6b66; --bg:#f7f4ee; --card:#ffffff;
   --line:#e3ddd2; --warn:#b45309; --warn-bg:#fef6e2; --bad:#b3261e; --bad-bg:#fdeceb;
   --ok:#166534; --ok-bg:#e9f7ee; --radius:14px;
   --shadow:0 1px 3px rgba(20,40,25,.08),0 4px 14px rgba(20,40,25,.05);
+  --paw:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 100 100'%3E%3Cg fill='%23ffffff' fill-opacity='0.09'%3E%3Cellipse cx='50' cy='66' rx='20' ry='16'/%3E%3Cellipse cx='20' cy='40' rx='8' ry='11' transform='rotate(-20 20 40)'/%3E%3Cellipse cx='38' cy='27' rx='8' ry='12'/%3E%3Cellipse cx='62' cy='27' rx='8' ry='12'/%3E%3Cellipse cx='80' cy='40' rx='8' ry='11' transform='rotate(20 80 40)'/%3E%3C/g%3E%3C/svg%3E");
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -19,8 +24,10 @@ input,select,textarea{font:inherit}
 .wrap.wide{max-width:1080px}
 
 /* Header */
-.app-header{background:var(--green);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;
+.app-header{background:linear-gradient(115deg,#0b3520,var(--green) 55%,#1a7a3c);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;
   position:sticky;top:0;z-index:20;box-shadow:var(--shadow)}
+.app-header::before{content:"";position:absolute;inset:0;background-image:var(--paw);background-size:120px;pointer-events:none}
+.app-header>*{position:relative}
 .app-header img{width:40px;height:40px;border-radius:10px;background:#fff8ee;padding:2px}
 .app-header .brand{font-weight:700;font-size:17px;line-height:1.15}
 .app-header .brand small{display:block;font-weight:500;font-size:12px;opacity:.85}
@@ -44,7 +51,7 @@ input,select,textarea{font:inherit}
 /* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:10px;
   padding:12px 18px;font-weight:600;font-size:15px;text-decoration:none;min-height:46px}
-.btn.primary{background:var(--green2);color:#fff}
+.btn.primary{background:linear-gradient(135deg,#22c55e,var(--green2) 60%,#15803d);color:#fff;box-shadow:0 2px 8px rgba(22,163,74,.35)}
 .btn.primary:active{background:var(--green)}
 .btn.green{background:var(--green);color:#fff}
 .btn.ghost{background:#fff;color:var(--green);border:1.5px solid var(--green)}
@@ -125,10 +132,13 @@ canvas.sig{display:block;width:100%;height:190px;touch-action:none}
 .job-card b{display:block;font-size:15px}
 .job-card span{font-size:13px;color:var(--muted)}
 
-.client-head{text-align:center;padding:26px 16px 6px}
-.client-head img{width:92px;height:92px}
-.client-head h1{font-size:22px;margin:10px 0 2px;color:var(--green)}
-.client-head p{margin:2px 0;color:var(--muted)}
+.client-head{text-align:center;padding:30px 16px 22px;margin-bottom:6px;color:#fff;
+  background:linear-gradient(150deg,#0b3520,var(--green) 55%,#1a7a3c);position:relative;overflow:hidden}
+.client-head::before{content:"";position:absolute;inset:0;background-image:var(--paw);background-size:120px;pointer-events:none}
+.client-head>*{position:relative}
+.client-head img{width:92px;height:92px;background:#fff8ee;border-radius:22px;padding:6px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.client-head h1{font-size:22px;margin:10px 0 2px;color:#fff}
+.client-head p{margin:2px 0;color:#d9efe0}
 .timeline{display:flex;gap:0;margin:16px 0 4px}
 .timeline div{flex:1;text-align:center;font-size:11px;color:#9aa39d;position:relative;padding-top:16px}
 .timeline div::before{content:"";position:absolute;top:5px;left:50%;transform:translateX(-50%);width:11px;height:11px;border-radius:50%;background:#d8dcd6}
@@ -151,3 +161,37 @@ code.linkbox{display:block;background:#f2efe7;border:1px solid var(--line);borde
 .confirm-panel h3{margin-top:0}
 .confirm-panel ul{margin:8px 0;padding-left:20px}
 .completion-zone{border-top:1px solid var(--line);margin-top:16px;padding-top:6px}
+
+/* ---- 2026-10-27 simplify + design refresh ---- */
+/* Board filter chips */
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 14px}
+.chip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:999px;padding:8px 14px;font-weight:600;font-size:13.5px;box-shadow:var(--shadow)}
+.chip b{background:#eef2ee;border-radius:999px;padding:0 8px;font-size:12.5px}
+.chip.on{background:linear-gradient(135deg,#1a7a3c,var(--green));color:#fff;border-color:var(--green)}
+.chip.on b{background:rgba(255,255,255,.22)}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto}
+.d-draft{background:var(--slate)} .d-quote{background:var(--sky)} .d-signed{background:var(--green2)}
+.d-scheduled{background:var(--violet)} .d-in_progress{background:var(--amber)} .d-done{background:#059669} .d-invoiced{background:var(--teal)}
+/* Stage accents on the board */
+.stage h3{display:flex;align-items:center;gap:8px}
+.stage h3::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--slate);flex:0 0 auto}
+.stage.s-draft h3::before{background:var(--slate)} .stage.s-quote h3::before{background:var(--sky)}
+.stage.s-signed h3::before{background:var(--green2)} .stage.s-scheduled h3::before{background:var(--violet)}
+.stage.s-in_progress h3::before{background:var(--amber)} .stage.s-done h3::before{background:#059669}
+.stage.s-invoiced h3::before{background:var(--teal)}
+.stage.s-draft .job-card{border-left:4px solid var(--slate)} .stage.s-quote .job-card{border-left:4px solid var(--sky)}
+.stage.s-signed .job-card{border-left:4px solid var(--green2)} .stage.s-scheduled .job-card{border-left:4px solid var(--violet)}
+.stage.s-in_progress .job-card{border-left:4px solid var(--amber)} .stage.s-done .job-card{border-left:4px solid #059669}
+.stage.s-invoiced .job-card{border-left:4px solid var(--teal)}
+.job-card .appt-line{display:block;margin-top:4px;color:var(--sky);font-weight:700;font-size:13px}
+.empty-board{text-align:center;padding:26px 14px}
+.empty-board img{width:70px;opacity:.95}
+/* Job detail: numbered steps + appointment box */
+.card.job-head{border-top:5px solid var(--amber)}
+.card.step>h2{display:flex;align-items:center;gap:10px}
+.stepn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 auto;
+  border-radius:50%;background:linear-gradient(135deg,var(--amber),var(--orange));color:#fff;font-size:15px;font-weight:800;
+  box-shadow:0 2px 6px rgba(234,88,12,.4)}
+.appt-box{background:var(--sky-soft);border:1.5px solid #bfe0f5;border-radius:12px;padding:12px 14px;margin:4px 0 6px}
+.owner-nav button.on{background:linear-gradient(135deg,#1a7a3c,var(--green));border-color:var(--green)}
