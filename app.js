@@ -9,6 +9,7 @@
   var app = document.getElementById("app");
   var DEMO = D.DEMO_MODE;
   var DEMO_PASSWORD = "panda2026"; // demo gate only — live mode uses Supabase Auth
+  var liveUserEmail = ""; // filled by liveSession() in live mode (Account card)
   var REF_RANGES = [
     ["Diagnostic / service call", "$75 – $99"],
     ["Furnace tune-up", "$89 – $119"],
@@ -106,8 +107,25 @@
     if (DEMO) return;
     try {
       var s = await D.supabase().auth.getSession();
-      if (s && s.data && s.data.session) sessionStorage.setItem("pj.liveAuth", "1");
+      if (s && s.data && s.data.session) {
+        sessionStorage.setItem("pj.liveAuth", "1");
+        if (s.data.session.user) liveUserEmail = s.data.session.user.email || "";
+      }
     } catch (e) { /* stay logged out */ }
+  }
+
+  /* Live mode only: shows the signed-in owner and lets them set/change the
+     account password (Supabase Auth updateUser). This is how an owner who
+     arrived via an email invitation link gets a password they can log in
+     with after that first session ends. Never rendered in demo mode. */
+  function accountHTML() {
+    return '<div class="card"><h2>Account</h2>' +
+      '<p class="muted small">Signed in as <b>' + esc(liveUserEmail || "your account") + '</b>.</p>' +
+      '<p class="small">Set a password for this account — you will need it to log in next time (invitation and recovery links sign you in only once). Use at least 8 characters.</p>' +
+      '<label class="f" for="acctPw1">New password</label><input type="password" id="acctPw1" autocomplete="new-password">' +
+      '<label class="f" for="acctPw2">Confirm new password</label><input type="password" id="acctPw2" autocomplete="new-password">' +
+      '<div id="acctMsg"></div>' +
+      '<div class="btn-row"><button class="btn primary" id="acctSave">Save password</button></div></div>';
   }
 
   /* ================= OWNER PANEL ================= */
@@ -129,6 +147,7 @@
     if (ownerTab === "clients") html += clientsHTML(clients, jobs);
     else if (ownerTab === "new") html += newJobHTML(clients);
     else html += jobsHTML(jobs, byClient);
+    if (!DEMO) html += accountHTML();
     html += "</main>" + footerHTML();
     app.innerHTML = html;
     wireOwner(clients, jobs, byClient);
@@ -529,6 +548,26 @@
 
   function wireOwner(clients, jobs, byClient) {
     document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    /* Account card (live mode only): set/change the owner's password. Works
+       for any live session — including one that started from an email
+       invitation or recovery link, which is the primary case. */
+    var acctBtn = document.getElementById("acctSave");
+    if (acctBtn) acctBtn.addEventListener("click", async function () {
+      var m = document.getElementById("acctMsg");
+      var p1 = document.getElementById("acctPw1").value;
+      var p2 = document.getElementById("acctPw2").value;
+      if (p1.length < 8) { m.innerHTML = errBox("Password must be at least 8 characters."); return; }
+      if (p1 !== p2) { m.innerHTML = errBox("Passwords do not match — type the same password in both fields."); return; }
+      acctBtn.disabled = true; acctBtn.textContent = "Saving…";
+      try {
+        var r = await D.supabase().auth.updateUser({ password: p1 });
+        if (r.error) throw r.error;
+        document.getElementById("acctPw1").value = "";
+        document.getElementById("acctPw2").value = "";
+        m.innerHTML = '<div class="notice ok">Password saved — use it to log in next time.</div>';
+      } catch (e) { m.innerHTML = errBox((e && e.message) || String(e)); }
+      acctBtn.disabled = false; acctBtn.textContent = "Save password";
+    });
     document.querySelectorAll("[data-tab]").forEach(function (b) {
       b.addEventListener("click", function () { ownerTab = b.getAttribute("data-tab"); renderOwner(); });
     });
