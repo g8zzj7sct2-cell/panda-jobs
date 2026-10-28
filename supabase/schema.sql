@@ -48,6 +48,7 @@ create table if not exists public.jobs (
   -- from copy_email_status so completing a job never rewrites the
   -- signed-copy email history.
   completed_at timestamptz,
+  archived_at timestamptz,
   completion_email_status text not null default '',
   completion_email_log jsonb not null default '[]'::jsonb,
   -- Owner-side log of direct quote sends from the panel's "Send to client"
@@ -165,6 +166,7 @@ begin
     'materials', j.materials, 'finalTotal', j.final_total,
     'paymentStatus', j.payment_status,
     'completedAt', coalesce(j.completed_at::text, ''),
+    'archivedAt', coalesce(j.archived_at::text, ''),
     'copyEmailStatus', case when j.copy_email_failed then 'failed' else j.copy_email_status end,
     'createdAt', j.created_at, 'updatedAt', j.updated_at,
     'client', jsonb_build_object('id', c.id, 'name', c.name, 'phone', c.phone,
