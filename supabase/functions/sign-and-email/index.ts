@@ -1,6 +1,23 @@
 // Panda Jobs — `sign-and-email` Edge Function (Plan Task 7, live mode).
 //
 // POST { action: "sign", token, name, signatureDataUrl, acceptedOptionals: number[], pdfBase64? }
+// POST { action: "complete", token, recipientEmail, pdfBase64, photoCounts,
+//        embeddedPhotoCount?, failedPhotoCount?, completedAt?, resend? }
+//
+// action "complete" (owner presses "Complete job" in the panel):
+//   1. Verify the token identifies a SIGNED job in a completable state
+//      (signed / scheduled / in_progress, or done for a re-send).
+//   2. Mark the job Done server-side (status + completed_at; a re-send
+//      keeps the original completed_at) and record the completion PDF
+//      document row in the panel flow (data.saveDocument, kind
+//      "completion-pdf") — this function does not duplicate that row.
+//   3. Email the browser-generated evidence PDF to the recipient (the
+//      panel's per-job override wins; the panel passes it explicitly),
+//      with a bcc copy to the company. Email failure NEVER undoes the
+//      completion: the job keeps status "done" and gets the DISTINCT
+//      completion_email_status "failed" (+ completion_email_log entry),
+//      so the signed-copy status is never overwritten.
+//   Response: { ok: true, emailStatus: "sent" | "failed", completedAt }.
 //
 // Flow:
 //   1. Look the job up by its client token with the SERVICE ROLE key
@@ -29,7 +46,6 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 const COMPANY = {
   name: "Angry Panda Heating and Cooling",
   email: "angrypandahvac@gmail.com",
-  phone: "(435) 680-6873",
   city: "Chicago, IL",
   cert: "EPA Section 608 Universal Certified",
 };
@@ -47,6 +63,128 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function cleanCount(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+async function completeJob(
+  payload: Record<string, unknown>,
+  supabase: ReturnType<typeof createClient>,
+): Promise<Response> {
+  const token = String(payload.token ?? "");
+  const recipient = String(payload.recipientEmail ?? "").trim();
+  const pdfBase64 = typeof payload.pdfBase64 === "string" ? payload.pdfBase64 : null;
+  const resend = payload.resend === true;
+  const rawCounts = (payload.photoCounts ?? {}) as Record<string, unknown>;
+  const photoCounts = {
+    assessment: cleanCount(rawCounts.assessment),
+    before: cleanCount(rawCounts.before),
+    after: cleanCount(rawCounts.after),
+  };
+  const embeddedPhotoCount = cleanCount(payload.embeddedPhotoCount);
+  const failedPhotoCount = cleanCount(payload.failedPhotoCount);
+  const requestedCompletedAt = typeof payload.completedAt === "string" && payload.completedAt
+    ? payload.completedAt
+    : null;
+  if (requestedCompletedAt && Number.isNaN(Date.parse(requestedCompletedAt))) {
+    return json({ error: "completedAt is not a valid date" }, 400);
+  }
+  if (!token || !EMAIL_RE.test(recipient) || !pdfBase64 || pdfBase64.length < 100) {
+    return json({ error: "token, a valid recipientEmail and the completion PDF are required" }, 400);
+  }
+
+  // 1) Job by token (service role — server-side only)
+  const { data: job, error: jobErr } = await supabase
+    .from("jobs").select("*, clients(*)").eq("token", token).single();
+  if (jobErr || !job) return json({ error: "Link not valid" }, 404);
+
+  // 2) State guard: only a signed job can be completed; "done" is allowed
+  //    so a failed evidence email can be re-sent.
+  const completable = ["signed", "scheduled", "in_progress", "done"];
+  if (!((job.signed_version ?? 0) > 0) || !completable.includes(String(job.status))) {
+    return json({ error: "This job is not in a state that can be completed" }, 409);
+  }
+
+  // 3) Mark Done BEFORE emailing — an email failure never rolls this back.
+  const completedAt = resend && job.completed_at
+    ? String(job.completed_at)
+    : (requestedCompletedAt ?? (job.completed_at ? String(job.completed_at) : new Date().toISOString()));
+  const { error: doneErr } = await supabase.from("jobs").update({
+    status: "done",
+    completed_at: completedAt,
+    updated_at: new Date().toISOString(),
+  }).eq("id", job.id);
+  if (doneErr) return json({ error: "Could not mark the job done: " + doneErr.message }, 500);
+
+  // 4) Email the evidence PDF (client + company bcc copy)
+  const client = (job as { clients?: { email?: string; name?: string } }).clients ?? {};
+  let emailStatus: "sent" | "failed" = "failed";
+  let emailError = "";
+  try {
+    const appPassword = Deno.env.get("GMAIL_APP_PASSWORD");
+    if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
+    const smtp = new SMTPClient({
+      connection: {
+        hostname: "smtp.gmail.com",
+        port: 465,
+        tls: true,
+        auth: { username: COMPANY.email, password: appPassword },
+      },
+    });
+    const attempted = photoCounts.assessment + photoCounts.before + photoCounts.after;
+    await smtp.send({
+      from: `${COMPANY.name} <${COMPANY.email}>`,
+      to: [recipient],
+      bcc: [COMPANY.email], // company copy
+      subject: `Your job completion report — ${COMPANY.name}`,
+      content: [
+        `Hi ${client.name ?? "there"},`,
+        ``,
+        `Your job "${job.title ?? "Heating / cooling service"}" is complete. The completion report is attached as a PDF.`,
+        `Completed: ${new Date(completedAt).toLocaleString("en-US")}`,
+        `Photo evidence in the report: ${embeddedPhotoCount} of ${attempted} photo(s) embedded` +
+          (failedPhotoCount ? ` (${failedPhotoCount} could not be embedded).` : "."),
+        ``,
+        `You can also review the work, photos and your signed agreement any time from your personal link — keep that email.`,
+        `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
+        ``,
+        `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
+      ].join("\n"),
+      attachments: [{
+        filename: "Angry-Panda-Job-Completion-Report.pdf",
+        contentType: "application/pdf",
+        encoding: "base64" as const,
+        content: pdfBase64,
+      }],
+    });
+    await smtp.close();
+    emailStatus = "sent";
+  } catch (e) {
+    emailError = e instanceof Error ? e.message : String(e);
+  }
+
+  // 5) Distinct completion email status + log (signed-copy fields untouched)
+  const priorLog = Array.isArray(job.completion_email_log) ? job.completion_email_log : [];
+  const entry: Record<string, unknown> = {
+    at: new Date().toISOString(), to: recipient, status: emailStatus,
+    photoCounts, embeddedPhotoCount, failedPhotoCount,
+  };
+  if (emailError) entry.error = emailError;
+  await supabase.from("jobs").update({
+    completion_email_status: emailStatus,
+    completion_email_log: [...priorLog, entry],
+    updated_at: new Date().toISOString(),
+  }).eq("id", job.id);
+
+  return json({
+    ok: true, emailStatus, completedAt,
+    ...(emailError ? { emailError } : {}),
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -57,6 +195,11 @@ Deno.serve(async (req: Request) => {
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
   }
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  if (payload.action === "complete") return await completeJob(payload, supabase);
   if (payload.action !== "sign") return json({ error: "Unknown action" }, 400);
 
   const token = String(payload.token ?? "");
@@ -70,11 +213,6 @@ Deno.serve(async (req: Request) => {
   if (!token || !name || !signatureDataUrl.startsWith("data:image/")) {
     return json({ error: "token, printed name and a signature image are required" }, 400);
   }
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
 
   // 1) Job by token
   const { data: job, error: jobErr } = await supabase
@@ -161,7 +299,7 @@ Deno.serve(async (req: Request) => {
         `Signed by: ${name} — ${new Date(signedAt).toLocaleString("en-US")}`,
         ``,
         `You can always review your quote, your signed copy, your appointment and your before/after photos from your personal link — keep this email.`,
-        `Questions? Call or text us at ${COMPANY.phone}.`,
+        `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
         ``,
         `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
       ].join("\n"),

@@ -43,6 +43,13 @@ create table if not exists public.jobs (
   photos jsonb not null default '{"assessment":[],"before":[],"after":[]}'::jsonb,
   copy_email_status text default '',
   copy_email_failed boolean not null default false,
+  -- Completion (owner presses "Complete job"): when the job was marked
+  -- Done and the separate completion/evidence email state. Kept distinct
+  -- from copy_email_status so completing a job never rewrites the
+  -- signed-copy email history.
+  completed_at timestamptz,
+  completion_email_status text not null default '',
+  completion_email_log jsonb not null default '[]'::jsonb,
   -- Owner-side log of direct quote sends from the panel's "Send to client"
   -- buttons: [{channel: 'Text message'|'Email', at: iso8601}].
   -- Mirrors job.sendLog in the app (data.js). Owner-only; never exposed
@@ -157,6 +164,7 @@ begin
     'scheduledAt', coalesce(j.scheduled_at::text, ''), 'workNotes', j.work_notes,
     'materials', j.materials, 'finalTotal', j.final_total,
     'paymentStatus', j.payment_status,
+    'completedAt', coalesce(j.completed_at::text, ''),
     'copyEmailStatus', case when j.copy_email_failed then 'failed' else j.copy_email_status end,
     'createdAt', j.created_at, 'updatedAt', j.updated_at,
     'client', jsonb_build_object('id', c.id, 'name', c.name, 'phone', c.phone,
