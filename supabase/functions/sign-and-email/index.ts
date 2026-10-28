@@ -28,7 +28,8 @@
 //      name, timestamp), set signed_version = version, status -> "signed".
 //   4. Email the signed PDF (client-supplied base64 generated in the portal,
 //      or a text summary fallback) to the CLIENT, with a copy to the company,
-//      from angrypandahvac@gmail.com via Gmail SMTP.
+//      via Gmail SMTP through the SENDER account (see SENDER below —
+//      temporarily the technician account, not the company inbox).
 //      - The Gmail app password comes ONLY from the function secret
 //        GMAIL_APP_PASSWORD (supabase secrets set GMAIL_APP_PASSWORD=...).
 //      - Email failure NEVER rolls back the signature: the job is flagged
@@ -48,6 +49,18 @@ const COMPANY = {
   email: "angrypandahvac@gmail.com",
   city: "Chicago, IL",
   cert: "EPA Section 608 Universal Certified",
+};
+
+// TEMPORARY SENDER (Rigo's call, 2026-10-28): the company Gmail is a
+// brand-new account and Google blocks creating an app password on it.
+// Until it unblocks, mail is sent THROUGH Rigo's technician account —
+// the GMAIL_APP_PASSWORD secret must hold THAT account's app password.
+// Clients still see the company name, get a Reply-To to the company
+// inbox, and the company copy (bcc) still lands at COMPANY.email.
+// To revert: point SENDER.email back to COMPANY.email and replace the
+// secret with the company account's app password.
+const SENDER = {
+  email: "rigo.technician.hvac@gmail.com",
 };
 
 const corsHeaders = {
@@ -131,12 +144,13 @@ async function completeJob(
         hostname: "smtp.gmail.com",
         port: 465,
         tls: true,
-        auth: { username: COMPANY.email, password: appPassword },
+        auth: { username: SENDER.email, password: appPassword },
       },
     });
     const attempted = photoCounts.assessment + photoCounts.before + photoCounts.after;
     await smtp.send({
-      from: `${COMPANY.name} <${COMPANY.email}>`,
+      from: `${COMPANY.name} <${SENDER.email}>`,
+      replyTo: COMPANY.email,
       to: [recipient],
       bcc: [COMPANY.email], // company copy
       subject: `Your job completion report — ${COMPANY.name}`,
@@ -272,7 +286,7 @@ Deno.serve(async (req: Request) => {
         hostname: "smtp.gmail.com",
         port: 465,
         tls: true,
-        auth: { username: COMPANY.email, password: appPassword },
+        auth: { username: SENDER.email, password: appPassword },
       },
     });
 
@@ -288,7 +302,8 @@ Deno.serve(async (req: Request) => {
       : undefined;
 
     await smtp.send({
-      from: `${COMPANY.name} <${COMPANY.email}>`,
+      from: `${COMPANY.name} <${SENDER.email}>`,
+      replyTo: COMPANY.email,
       to: [clientEmail],
       bcc: [COMPANY.email], // company copy
       subject: `Your signed agreement — ${COMPANY.name}`,
