@@ -16,7 +16,7 @@
  *    deposit, terms, version, signedVersion, signatures:[{version,name,signatureDataUrl,signedAt}],
  *    scheduledAt, workNotes, materials, finalTotal, paymentStatus,
  *    photos:{assessment:[],before:[],after:[]}, copyEmailStatus, copyEmailLog:[],
- *    completedAt:"", completionEmailStatus:"",
+ *    completedAt:"", archivedAt:"", completionEmailStatus:"",
  *    completionEmailLog:[{at,to,status,note?,photoCounts,embeddedPhotoCount,failedPhotoCount}],
  *    documents:[{version,kind,pdfDataUrl?,fileUrl?,createdAt}],
  *    sendLog:[{channel, at, to?}], sendEmail:"", createdAt, updatedAt}
@@ -69,7 +69,7 @@
       paymentStatus: "pending",
       photos: { assessment: [], before: [], after: [] },
       copyEmailStatus: "", copyEmailLog: [],
-      completedAt: "", completionEmailStatus: "", completionEmailLog: [], documents: [],
+      completedAt: "", archivedAt: "", completionEmailStatus: "", completionEmailLog: [], documents: [],
       sendLog: [], sendEmail: "",
       createdAt: nowIso(), updatedAt: nowIso()
     };
@@ -234,7 +234,7 @@
       finalTotal: r.final_total === null || r.final_total === undefined ? null : Number(r.final_total),
       paymentStatus: r.payment_status, photos: r.photos || { assessment: [], before: [], after: [] },
       copyEmailStatus: r.copy_email_status || "", copyEmailLog: [],
-      completedAt: r.completed_at || "", completionEmailStatus: r.completion_email_status || "",
+      completedAt: r.completed_at || "", archivedAt: r.archived_at || "", completionEmailStatus: r.completion_email_status || "",
       completionEmailLog: r.completion_email_log || [], documents: [],
       sendLog: r.send_log || [], sendEmail: r.send_email || "",
       createdAt: r.created_at, updatedAt: r.updated_at
@@ -290,7 +290,7 @@
         terms: j.terms, version: j.version, signed_version: j.signedVersion, scheduled_at: j.scheduledAt || null,
         work_notes: j.workNotes, materials: j.materials, final_total: j.finalTotal, payment_status: j.paymentStatus,
         photos: j.photos, copy_email_status: j.copyEmailStatus,
-        completed_at: j.completedAt || null, completion_email_status: j.completionEmailStatus || "",
+        completed_at: j.completedAt || null, archived_at: j.archivedAt || null, completion_email_status: j.completionEmailStatus || "",
         completion_email_log: j.completionEmailLog || [],
         send_log: j.sendLog || [], send_email: j.sendEmail || "" };
       var res;

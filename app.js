@@ -150,10 +150,12 @@
     html += '<nav class="owner-nav">' +
       '<button data-tab="jobs" class="' + (ownerTab === "jobs" ? "on" : "") + '">Jobs</button>' +
       '<button data-tab="clients" class="' + (ownerTab === "clients" ? "on" : "") + '">Clients</button>' +
+      '<button data-tab="history" class="' + (ownerTab === "history" ? "on" : "") + '">History</button>' +
       '<button data-tab="new" class="' + (ownerTab === "new" ? "on" : "") + '">+ New job</button></nav>';
     html += '<main class="wrap wide">';
     if (DEMO) html += '<div class="notice warn"><b>Demo mode:</b> data is stored only in this browser (localStorage) and the signed-copy email is simulated — nothing is sent. Fill in <code>config.js</code> with the Supabase project to go live (see README).</div>';
     if (ownerTab === "clients") html += clientsHTML(clients, jobs);
+    else if (ownerTab === "history") html += historyHTML(jobs, byClient);
     else if (ownerTab === "new") html += newJobHTML(clients);
     else html += jobsHTML(jobs, byClient);
     if (!DEMO) html += accountHTML();
@@ -192,6 +194,7 @@
      the list; empty stages disappear in the "All" view instead of showing
      seven "No jobs here" boxes. Job cards also show the appointment. */
   function jobsHTML(jobs, byClient) {
+    jobs = jobs.filter(function (j) { return !j.archivedAt; }); // archived jobs live in History
     var counts = {};
     STAGES.forEach(function (st) { counts[st[0]] = jobs.filter(function (j) { return j.status === st[0]; }).length; });
     var html = '<div class="chips">' +
@@ -253,6 +256,117 @@
       '<label class="f">Client</label><select id="nj_client">' + opts + "</select>" +
       '<label class="f">Job title</label><input type="text" id="nj_title" placeholder="e.g. Furnace replacement — no heat">' +
       '<div class="btn-row"><button class="btn primary" id="nj_create">Create job & build quote</button></div></div>';
+  }
+
+  /* ---------- History (archived jobs) ----------
+     Jobs the owner finished from the Invoiced stage land here with only
+     the record that matters later: photos, installation date & time,
+     notes, the invoice amounts and the signed contract. Searchable by
+     client name, phone (digits) or email for future lookups. */
+  function historyHTML(jobs, byClient) {
+    var archived = jobs.filter(function (j) { return j.archivedAt; }).slice()
+      .sort(function (a, b) { return String(b.archivedAt).localeCompare(String(a.archivedAt)); });
+    var html = '<div class="card"><h2>🗂️ Job history</h2>' +
+      '<p class="small muted">Finished jobs, kept for future lookups — photos, installation date &amp; time, notes, invoice and signed contract.</p>' +
+      '<label class="f" for="historySearch">Search by name, phone or email</label>' +
+      '<input type="text" id="historySearch" autocomplete="off" placeholder="e.g. Maria, 3125550147, maria@email.com">' +
+      '<div id="historyList" style="margin-top:12px">';
+    if (!archived.length) html += '<p class="muted" id="historyEmpty">No finished jobs yet. When an invoiced job is done for good, press <b>“Complete &amp; move to History”</b> on it and it will live here.</p>';
+    archived.forEach(function (j) {
+      var c = byClient[j.clientId];
+      var when = j.scheduledAt || j.completedAt || j.archivedAt;
+      var searchText = ((c ? c.name : "") + " " + (c ? c.email : "") + " " + (c ? c.phone : "") + " " + (j.title || "")).toLowerCase();
+      var phoneDigits = c ? String(c.phone || "").replace(/\D/g, "") : "";
+      html += '<button class="job-card hist-card" data-open-history="' + j.id + '" data-search="' + esc(searchText) + '" data-phone="' + phoneDigits + '"><b>' + esc(j.title || "Untitled job") + "</b>" +
+        "<span>" + esc(c ? c.name : "—") + " • " + money(j.finalTotal != null ? j.finalTotal : window.PandaPDF.total(j)) + "</span>" +
+        '<span class="appt-line">📅 Installed: ' + fmtDate(when) + "</span></button>";
+    });
+    html += '</div><p class="small muted" id="historyNoMatch" style="display:none">No records match that search.</p></div>';
+    return html;
+  }
+
+  async function renderHistoryRecord(jobId) {
+    var job = await D.getJob(jobId);
+    if (!job || !job.archivedAt) { ownerTab = "history"; renderOwner(); return; }
+    var clients = await D.listClients();
+    var client = clients.filter(function (c) { return c.id === job.clientId; })[0];
+    var sig = signedSig(job);
+    var total = job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job);
+    var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
+    html += '<main class="wrap wide"><div class="btn-row"><button class="btn light small" id="backHistory">← Job history</button></div>';
+    html += '<div id="histMsg"></div>';
+    html += '<div class="card job-head"><h2>' + esc(job.title || "Untitled job") + '</h2>' +
+      '<p class="muted small">Client: <b>' + esc(client ? client.name : "—") + "</b> • " + esc(client ? client.phone : "") + " • " + esc(client ? client.email : "") + "<br>" +
+      esc(client ? client.address : "") + (client && client.equipment ? "<br>Equipment: " + esc(client.equipment) : "") + "</p>" +
+      '<p class="small">📅 <b>Installation date &amp; time:</b> ' + (job.scheduledAt ? fmtDate(job.scheduledAt) : "—") + "<br>" +
+      "✅ <b>Work completed:</b> " + (job.completedAt ? fmtDate(job.completedAt) : "—") + "<br>" +
+      "🗂️ <b>Moved to History:</b> " + fmtDate(job.archivedAt) + "</p></div>";
+
+    /* Photos — the visual record */
+    html += '<div class="card"><h2>📸 Photos</h2>';
+    var anyPhoto = false;
+    [["assessment", "Assessment"], ["before", "BEFORE"], ["after", "AFTER"]].forEach(function (pair) {
+      var list = job.photos[pair[0]] || [];
+      if (!list.length) return;
+      anyPhoto = true;
+      html += "<h3>" + pair[1] + " (" + list.length + ')</h3><div class="photo-grid">' +
+        list.map(function (p, i) { return '<figure><img src="' + p + '" alt="' + pair[1] + " photo " + (i + 1) + '"></figure>'; }).join("") + "</div>";
+    });
+    if (!anyPhoto) html += '<p class="muted">No photos were uploaded for this job.</p>';
+    html += "</div>";
+
+    /* Notes */
+    html += '<div class="card"><h2>📝 Notes</h2>';
+    if (job.workNotes) html += "<h3>What we did</h3><p style=\"white-space:pre-wrap\">" + esc(job.workNotes) + "</p>";
+    if (job.materials) html += "<h3>Materials used</h3><p style=\"white-space:pre-wrap\">" + esc(job.materials) + "</p>";
+    if (!job.workNotes && !job.materials) html += '<p class="muted">No notes recorded.</p>';
+    html += "</div>";
+
+    /* Invoice — the billed amounts on the job */
+    html += '<div class="card"><h2>🧾 Invoice</h2>' +
+      '<table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr>' +
+      job.items.filter(function (it) { return !it.optional || it.accepted; }).map(function (it) {
+        return "<tr><td>" + esc(it.desc) + '</td><td class="num">' + it.qty + '</td><td class="num">' + money(it.qty * it.price) + "</td></tr>";
+      }).join("") +
+      '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num">' + money(total) + "</td></tr></table>" +
+      (job.deposit ? '<p class="small muted">Deposit at signing: <b>' + money(job.deposit) + "</b></p>" : "") +
+      '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
+      (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p></div>";
+
+    /* Signed contract */
+    html += '<div class="card"><h2>✍️ Signed contract</h2>';
+    if (sig) {
+      html += '<p>Signed by <b>' + esc(sig.name) + "</b> on " + fmtDate(sig.signedAt) + " (version " + sig.version + ').</p>' +
+        '<div class="sig-locked"><img src="' + sig.signatureDataUrl + '" alt="Client signature"></div>' +
+        '<div class="btn-row"><button class="btn primary" id="histSignedPdf">Download signed contract (PDF)</button>' +
+        '<button class="btn ghost" id="histCompletionPdf">Download completion report</button></div>';
+    } else {
+      html += '<p class="muted">No signature on file for this job.</p>';
+    }
+    html += '<div class="btn-row"><button class="btn light" id="histRestore">Restore to Jobs board</button></div></div>';
+    html += "</main>" + footerHTML();
+    app.innerHTML = html;
+    document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    document.getElementById("backHistory").addEventListener("click", function () { ownerTab = "history"; renderOwner(); });
+    var m = document.getElementById("histMsg");
+    var sp = document.getElementById("histSignedPdf");
+    if (sp) sp.addEventListener("click", async function () {
+      await window.PandaPDF.download(job, client, { version: sig.version, filename: "angry-panda-signed-v" + sig.version + ".pdf" });
+    });
+    var cp = document.getElementById("histCompletionPdf");
+    if (cp) cp.addEventListener("click", async function () {
+      try { await window.PandaPDF.completionDownload(job, client, { completedAt: job.completedAt || undefined, filename: "angry-panda-completion-report.pdf" }); }
+      catch (e) { m.innerHTML = errBox("Could not generate the completion report: " + (e.message || e)); }
+    });
+    document.getElementById("histRestore").addEventListener("click", async function () {
+      if (!confirm("Restore this job to the Jobs board? It will leave History and reappear under its stage.")) return;
+      try {
+        var fresh = (await D.getJob(job.id)) || job;
+        fresh.archivedAt = "";
+        await D.saveJob(fresh);
+        ownerTab = "jobs"; renderOwner();
+      } catch (e) { m.innerHTML = errBox("Could not restore the job: " + (e.message || e)); }
+    });
   }
 
   /* ---------- job detail / quote builder ---------- */
@@ -395,7 +509,11 @@
         '<div class="btn-row"><button class="btn ghost" id="downloadCompletionPdf">Download completion PDF</button>' +
         (job.status === "done" && job.completionEmailStatus !== "sent"
           ? '<button class="btn primary" id="resendCompletionBtn">Re-send completion PDF</button>' : "") +
-        "</div>";
+        "</div>" +
+        (job.status === "invoiced"
+          ? '<div class="btn-row"><button class="btn primary block" id="archiveJobBtn">🏁 Complete &amp; move to History</button></div>' +
+            '<p class="small muted">Finished for good? This takes the job off the board and files it in <b>History</b> (photos, installation date &amp; time, notes, invoice and signed contract), searchable by name, phone or email.</p>'
+          : "");
     } else if (canComplete) {
       html += '<p class="small muted">When the work and the photos above are ready, complete the job: the client gets ONE evidence PDF with the summary, materials, agreement, signature and all photos (' +
         pc.assessment + " assessment · " + pc.before + " before · " + pc.after + " after).</p>" +
@@ -728,6 +846,16 @@
         completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send PDF" : "Yes, complete & send PDF";
       }
     });
+    var archiveBtn = document.getElementById("archiveJobBtn");
+    if (archiveBtn) archiveBtn.addEventListener("click", async function () {
+      if (!confirm("Finish this job and move it to History? It will leave the Jobs board — you can restore it from History anytime.")) return;
+      try {
+        var fresh = (await D.getJob(job.id)) || job;
+        fresh.archivedAt = new Date().toISOString();
+        await D.saveJob(fresh);
+        ownerTab = "jobs"; renderOwner();
+      } catch (e) { msg.innerHTML = errBox("Could not move the job to History: " + (e.message || e)); }
+    });
     var dlCompletion = document.getElementById("downloadCompletionPdf");
     if (dlCompletion) dlCompletion.addEventListener("click", async function () {
       try {
@@ -833,6 +961,26 @@
     });
     document.querySelectorAll("[data-board-filter]").forEach(function (b) {
       b.addEventListener("click", function () { boardFilter = b.getAttribute("data-board-filter"); renderOwner(); });
+    });
+    /* History tab: open a record, and live-search by name / phone / email
+       (phone matching is digit-based, so "(312) 555-0147" and "3125550147"
+       find the same record). */
+    document.querySelectorAll("[data-open-history]").forEach(function (b) {
+      b.addEventListener("click", function () { renderHistoryRecord(b.getAttribute("data-open-history")); });
+    });
+    var hSearch = document.getElementById("historySearch");
+    if (hSearch) hSearch.addEventListener("input", function () {
+      var q = hSearch.value.trim().toLowerCase();
+      var qd = q.replace(/\D/g, "");
+      var anyVisible = false;
+      document.querySelectorAll("[data-open-history]").forEach(function (el) {
+        var hit = !q || (el.getAttribute("data-search") || "").indexOf(q) >= 0 ||
+          (qd.length >= 3 && (el.getAttribute("data-phone") || "").indexOf(qd) >= 0);
+        el.style.display = hit ? "" : "none";
+        if (hit) anyVisible = true;
+      });
+      var nm = document.getElementById("historyNoMatch");
+      if (nm) nm.style.display = anyVisible ? "none" : "";
     });
     var saveBtn = document.getElementById("cf_save");
     if (saveBtn) {
