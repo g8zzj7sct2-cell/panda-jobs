@@ -73,7 +73,7 @@
   }
   function footerHTML() {
     return '<footer class="app-foot">' + esc(COMPANY.name) + " • " + esc(COMPANY.cert) + "<br>" +
-      '<a href="tel:+14356806873">' + esc(COMPANY.phone) + "</a> • " + esc(COMPANY.email) + " • Chicago, IL</footer>";
+      '<a href="mailto:' + esc(COMPANY.email) + '">' + esc(COMPANY.email) + "</a> • Chicago, IL</footer>";
   }
   function errBox(msg) { return '<div class="notice bad" role="alert">' + esc(msg) + "</div>"; }
 
@@ -324,10 +324,27 @@
         return '<p class="small muted">' + fmtDate(l.at) + " → " + esc(l.to) + ": <b>" + esc(l.status) + "</b>" + (l.note ? " — " + esc(l.note) : "") + "</p>";
       }).join("");
     }
+    var completionDocs = (job.documents || []).filter(function (d) { return d.kind === "completion-pdf"; });
+    if (completionDocs.length) {
+      html += '<h3>Completion reports</h3>' + (job.documents || []).map(function (d, ix) {
+        if (d.kind !== "completion-pdf") return "";
+        return '<div class="list-row"><div class="grow"><b>Completion report</b><br><span class="muted small">' +
+          fmtDate(d.createdAt || d.completedAt || "") + (d.recipient ? " • for " + esc(d.recipient) : "") +
+          (d.failedPhotoCount ? " • " + d.failedPhotoCount + " photo(s) could not be embedded" : "") +
+          '</span></div>' + (d.pdfDataUrl
+            ? '<button class="btn small light" data-download-completion="' + ix + '">Download</button>'
+            : '<span class="pill">PDF recorded</span>') + "</div>";
+      }).join("");
+    }
+    if (job.completionEmailLog && job.completionEmailLog.length) {
+      html += '<h3>Completion email log</h3>' + job.completionEmailLog.map(function (l) {
+        return '<p class="small muted">' + fmtDate(l.at) + " → " + esc(l.to) + ": <b>" + esc(l.status) + "</b>" + (l.note ? " — " + esc(l.note) : "") + "</p>";
+      }).join("");
+    }
     html += '<div class="btn-row"><button class="btn light" id="docPdf">Download signed PDF</button></div></div>';
 
     /* Execution */
-    html += '<div class="card"><h2>Job execution</h2>' +
+    html += '<div class="card"><h2>Work, photos &amp; completion</h2>' +
       '<label class="f">Work performed (summary the client will see)</label><textarea id="jd_notes">' + esc(job.workNotes) + "</textarea>" +
       '<label class="f">Materials used</label><textarea id="jd_materials">' + esc(job.materials) + "</textarea>" +
       '<label class="f">Final total ($) — leave empty to use the quote total</label><input type="number" id="jd_final" min="0" step="0.01" value="' + (job.finalTotal == null ? "" : job.finalTotal) + '">' +
@@ -342,7 +359,37 @@
         }).join("") + "</div>" +
         '<label class="btn light file-btn" style="margin-top:8px">+ Add ' + kind + ' photo (camera or album)<input type="file" accept="image/*" data-photo-input="' + kind + '"></label>';
     });
-    html += "</div>";
+    /* Completion: "Complete job" lives here, under the work + photos it
+       sends as evidence. Draft/quote jobs cannot be completed (nothing
+       signed yet); done/invoiced jobs show their completion state. */
+    var pc = { assessment: (job.photos.assessment || []).length, before: (job.photos.before || []).length, after: (job.photos.after || []).length };
+    var canComplete = job.signedVersion > 0 && ["signed", "scheduled", "in_progress"].indexOf(job.status) >= 0;
+    html += '<div class="completion-zone"><h3>Completion</h3>';
+    if (job.status === "done" || job.status === "invoiced") {
+      html += '<div class="notice ok" id="completionState"><b>✓ Job completed</b>' +
+        (job.completedAt ? " on " + fmtDate(job.completedAt) + "." : " (this job was marked Done before completion tracking, so no completion date was recorded).") +
+        "<br>Completion evidence email: <b>" + esc(job.completionEmailStatus || "not sent through Complete job") + "</b>" +
+        (job.completionEmailLog && job.completionEmailLog.length ? " — last to " + esc(job.completionEmailLog[job.completionEmailLog.length - 1].to) : "") +
+        "</div>" +
+        '<div class="btn-row"><button class="btn ghost" id="downloadCompletionPdf">Download completion PDF</button>' +
+        (job.status === "done" && job.completionEmailStatus !== "sent"
+          ? '<button class="btn primary" id="resendCompletionBtn">Re-send completion PDF</button>' : "") +
+        "</div>";
+    } else if (canComplete) {
+      html += '<p class="small muted">When the work and the photos above are ready, complete the job: the client gets ONE evidence PDF with the summary, materials, agreement, signature and all photos (' +
+        pc.assessment + " assessment · " + pc.before + " before · " + pc.after + " after).</p>" +
+        '<button class="btn primary block" id="completeJobBtn">✅ Complete job</button>';
+    } else {
+      html += '<p class="small muted" id="completeUnavailable">The <b>Complete job</b> button appears here once the client has signed and the job is scheduled or in progress. Draft and unsigned quotes cannot be completed.</p>';
+    }
+    if (canComplete || (job.status === "done" && job.completionEmailStatus !== "sent")) {
+      html += '<div id="completeConfirm" class="confirm-panel" style="display:none">' +
+        '<h3 id="completeConfirmTitle">Is this job complete?</h3>' +
+        '<div id="completeConfirmBody"></div><div id="completeMsg"></div>' +
+        '<div class="btn-row"><button class="btn light" id="completeCancel">Cancel</button>' +
+        '<button class="btn primary" id="completeConfirmBtn">Yes, complete &amp; send PDF</button></div></div>';
+    }
+    html += "</div></div>";
     html += '<div class="card"><button class="btn danger" id="delJob">Delete this job</button></div>';
     html += "</main>" + footerHTML();
     app.innerHTML = html;
@@ -510,6 +557,175 @@
       await D.saveJob(job);
       msg.innerHTML = '<div class="notice ok">Execution details saved — the client portal is updated.</div>'; window.scrollTo(0, 0);
     });
+    /* ---------- Complete job ----------
+       Flow: open panel (no writes) -> Cancel leaves everything untouched
+       -> Confirm persists the CURRENT execution form first, generates
+       the evidence PDF, records it as a "completion-pdf" document, then
+       D.completeJob marks Done + emails it (demo simulates; live goes
+       through the Edge Function action "complete"). Email failure never
+       undoes the completion — see the catch path and the done state. */
+    var completionMode = "complete";
+    function completionCounts() {
+      return {
+        assessment: (job.photos.assessment || []).length,
+        before: (job.photos.before || []).length,
+        after: (job.photos.after || []).length
+      };
+    }
+    function completionRecipient() {
+      var f = document.getElementById("sendEmailTo");
+      return (f ? f.value : (job.sendEmail || (client ? client.email : "")) || "").trim();
+    }
+    function readExecutionInto(target) {
+      target.workNotes = document.getElementById("jd_notes").value;
+      target.materials = document.getElementById("jd_materials").value;
+      var f = document.getElementById("jd_final").value;
+      target.finalTotal = f === "" ? null : parseFloat(f);
+      target.paymentStatus = document.getElementById("jd_pay").value;
+      target.scheduledAt = document.getElementById("jd_sched").value;
+      return target;
+    }
+    function openCompletionPanel(mode) {
+      completionMode = mode;
+      var panel = document.getElementById("completeConfirm"); if (!panel) return;
+      var recipient = completionRecipient();
+      var counts = completionCounts();
+      var totalPhotos = counts.assessment + counts.before + counts.after;
+      var notes = document.getElementById("jd_notes").value.trim();
+      var mats = document.getElementById("jd_materials").value.trim();
+      var okRecipient = validEmail(recipient);
+      document.getElementById("completeConfirmTitle").textContent =
+        mode === "resend" ? "Re-send the completion PDF?" : "Is this job complete?";
+      var bodyHtml = mode === "resend"
+        ? '<p>This will re-send the completion evidence PDF for this job. The job stays <b>Done</b> and keeps its original completion date.</p>'
+        : '<p>This will mark the job <b>Done</b>, save the work details as currently typed, generate ONE evidence PDF and email it to the client.</p>';
+      bodyHtml += '<ul class="small">' +
+        '<li>Assessment photos: <b>' + counts.assessment + '</b></li>' +
+        '<li>BEFORE photos: <b>' + counts.before + '</b></li>' +
+        '<li>AFTER photos: <b>' + counts.after + '</b></li>' +
+        '<li>Work summary: <b>' + (notes ? "included" : "not written") + '</b></li>' +
+        '<li>Materials: <b>' + (mats ? "included" : "not written") + '</b></li>' +
+        '<li>Recipient: <b>' + esc(recipient || "(no email)") + '</b></li></ul>';
+      if (!totalPhotos) bodyHtml += '<div class="notice warn"><b>No photos uploaded.</b> The PDF will still be sent, but it will contain no photo evidence. Add photos above first if the client should receive them.</div>';
+      if (!okRecipient) bodyHtml += errBox("No valid recipient email — type one in the \u201cSend to email\u201d field above (or fix the client's email in the Clients tab). The job was NOT completed and nothing was sent.");
+      document.getElementById("completeConfirmBody").innerHTML = bodyHtml;
+      document.getElementById("completeMsg").innerHTML = "";
+      var confirmBtn = document.getElementById("completeConfirmBtn");
+      confirmBtn.textContent = mode === "resend" ? "Yes, re-send PDF" : "Yes, complete & send PDF";
+      confirmBtn.disabled = !okRecipient;
+      panel.style.display = "";
+      panel.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    var completeBtn = document.getElementById("completeJobBtn");
+    if (completeBtn) completeBtn.addEventListener("click", function () { openCompletionPanel("complete"); });
+    var resendBtn = document.getElementById("resendCompletionBtn");
+    if (resendBtn) resendBtn.addEventListener("click", function () { openCompletionPanel("resend"); });
+    var completeCancel = document.getElementById("completeCancel");
+    if (completeCancel) completeCancel.addEventListener("click", function () {
+      var panel = document.getElementById("completeConfirm");
+      if (panel) panel.style.display = "none";
+    });
+    var completeConfirmBtn = document.getElementById("completeConfirmBtn");
+    if (completeConfirmBtn) completeConfirmBtn.addEventListener("click", async function () {
+      var recipient = completionRecipient();
+      var panelMsg = document.getElementById("completeMsg");
+      if (!validEmail(recipient)) {
+        panelMsg.innerHTML = errBox("No valid recipient email — the job was NOT completed and nothing was sent.");
+        return;
+      }
+      completeConfirmBtn.disabled = true;
+      if (completeCancel) completeCancel.disabled = true;
+      completeConfirmBtn.textContent = "Working…";
+      try {
+        // 1) Persist the latest execution-form values + the recipient
+        //    override BEFORE anything is generated or marked.
+        readExecutionInto(job);
+        job.sendEmail = recipient;
+        await D.saveJob(job);
+        // 2) Generate the evidence PDF from the just-saved values.
+        var completedAt = completionMode === "resend" && job.completedAt
+          ? job.completedAt : new Date().toISOString();
+        var pdfJob = Object.assign({}, job, { status: "done", completedAt: completedAt });
+        var made = await window.PandaPDF.completionBase64(pdfJob, client, { completedAt: completedAt });
+        var stats = made.stats;
+        // 3) Record the PDF as a completion document.
+        await D.saveDocument(job.id, {
+          version: job.version, kind: "completion-pdf",
+          pdfDataUrl: "data:application/pdf;base64," + made.base64,
+          recipient: recipient, photoCounts: stats.photoCounts,
+          embeddedPhotoCount: stats.embeddedPhotoCount,
+          failedPhotoCount: stats.failedPhotoCount, completedAt: completedAt
+        });
+        // 4) Mark Done + send (demo simulates; live = Edge Function).
+        var result;
+        try {
+          result = await D.completeJob(job.token, {
+            recipientEmail: recipient, pdfBase64: made.base64,
+            photoCounts: stats.photoCounts,
+            embeddedPhotoCount: stats.embeddedPhotoCount,
+            failedPhotoCount: stats.failedPhotoCount,
+            completedAt: completedAt, resend: completionMode === "resend"
+          });
+        } catch (sendErr) {
+          // If the completion DID land server-side but the response was
+          // lost, keep the completion and record the email as failed.
+          var fresh = null;
+          try { fresh = await D.getJob(job.id); } catch (e2) { /* ignore */ }
+          if (fresh && fresh.status === "done") {
+            fresh.completionEmailStatus = "failed";
+            fresh.completionEmailLog = fresh.completionEmailLog || [];
+            fresh.completionEmailLog.push({
+              at: new Date().toISOString(), to: recipient, status: "failed",
+              note: "Job completed and PDF recorded, but the email request failed: " + (sendErr.message || sendErr),
+              photoCounts: stats.photoCounts, embeddedPhotoCount: stats.embeddedPhotoCount,
+              failedPhotoCount: stats.failedPhotoCount
+            });
+            try { await D.saveJob(fresh); } catch (e3) { /* status stays failed in the UI message */ }
+            result = { ok: true, emailStatus: "failed", completedAt: fresh.completedAt || completedAt };
+          } else { throw sendErr; }
+        }
+        var emailStatus = (result && result.emailStatus) || "";
+        await renderJobDetail(job.id);
+        var m2 = document.getElementById("jobMsg");
+        if (m2) {
+          if (emailStatus === "failed") {
+            m2.innerHTML = '<div class="notice bad"><b>Job completed.</b> The evidence PDF was generated and recorded, but the completion email <b>failed</b> — the job stays Done and the PDF can be re-sent from the completion section below.</div>';
+          } else if (String(emailStatus).indexOf("demo") === 0) {
+            m2.innerHTML = '<div class="notice warn"><b>Job completed (demo).</b> The evidence PDF was generated and recorded; the completion email is <b>simulated</b> in demo mode — nothing was actually sent.</div>';
+          } else {
+            m2.innerHTML = '<div class="notice ok"><b>Job completed.</b> The evidence PDF was emailed to ' + esc(recipient) + ".</div>";
+          }
+          if (stats.failedPhotoCount) {
+            m2.innerHTML += '<div class="notice warn">' + stats.failedPhotoCount + " photo(s) could not be embedded in the PDF (the rest of the evidence was included).</div>";
+          }
+          window.scrollTo(0, 0);
+        }
+      } catch (e) {
+        panelMsg.innerHTML = errBox("Could not complete the job: " + (e.message || e));
+        completeConfirmBtn.disabled = false;
+        if (completeCancel) completeCancel.disabled = false;
+        completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send PDF" : "Yes, complete & send PDF";
+      }
+    });
+    var dlCompletion = document.getElementById("downloadCompletionPdf");
+    if (dlCompletion) dlCompletion.addEventListener("click", async function () {
+      try {
+        var st = await window.PandaPDF.completionDownload(job, client, {
+          completedAt: job.completedAt || undefined,
+          filename: "angry-panda-completion-report.pdf"
+        });
+        if (st && st.failedPhotoCount) msg.innerHTML = '<div class="notice warn">' + st.failedPhotoCount + " photo(s) could not be embedded in the downloaded PDF.</div>";
+      } catch (e) { msg.innerHTML = errBox("Could not generate the completion PDF: " + (e.message || e)); }
+    });
+    document.querySelectorAll("[data-download-completion]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var d = (job.documents || [])[+b.getAttribute("data-download-completion")];
+        if (!d || !d.pdfDataUrl) return;
+        var a = document.createElement("a");
+        a.href = d.pdfDataUrl; a.download = "angry-panda-completion-report.pdf";
+        document.body.appendChild(a); a.click(); a.remove();
+      });
+    });
     document.querySelectorAll("[data-photo-input]").forEach(function (inp) {
       inp.addEventListener("change", async function () {
         var file = inp.files && inp.files[0]; if (!file) return;
@@ -649,8 +865,7 @@
         '<main class="wrap"><div class="card center"><img src="assets/logo.png" alt="" style="width:84px">' +
         "<h2>This link is not valid</h2>" +
         '<p class="muted">This link may be old or incomplete. Please contact Angry Panda Heating and Cooling and we will send you a fresh link right away.</p>' +
-        '<div class="btn-row"><a class="btn primary" href="tel:+14356806873">Call (435) 680-6873</a>' +
-        '<a class="btn ghost" href="sms:+14356806873">Text us</a></div></div></main>' + footerHTML();
+        '<div class="btn-row"><a class="btn primary" href="mailto:angrypandahvac@gmail.com?subject=Help%20with%20my%20Panda%20Jobs%20link">✉️ Email us</a></div></div></main>' + footerHTML();
       return;
     }
     var client = null;
@@ -670,8 +885,7 @@
       "<h1>Angry Panda Heating and Cooling</h1>" +
       "<p>Heating • Air Conditioning • Water Heaters</p><p>" + esc(COMPANY.cert) + " • Chicago, IL</p></div>";
     html += '<main class="wrap">';
-    html += '<div class="btn-row"><a class="btn primary" href="tel:+14356806873">📞 Call (435) 680-6873</a>' +
-      '<a class="btn ghost" href="sms:+14356806873?&body=Hi%2C%20I%20need%20help%20with%20my%20heating%2FAC%20unit.">💬 Text us</a></div>';
+    html += '<div class="btn-row"><a class="btn primary" href="mailto:angrypandahvac@gmail.com?subject=Help%20with%20my%20heating%2FAC%20unit">✉️ Email us</a></div>';
     html += statusTimeline(job);
     if (job.scheduledAt) html += '<div class="notice ok center">📅 Your appointment: <b>' + fmtDate(job.scheduledAt) + "</b></div>";
     if (job.copyEmailStatus === "failed" && alreadySigned) html += '<div class="notice warn">We could not email your signed copy — you can download it below, it is saved and valid.</div>';
@@ -723,6 +937,9 @@
       html += '<section class="card"><h2>Your job</h2>';
       html += '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
         (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p>";
+      if ((job.status === "done" || job.status === "invoiced") && job.completedAt) {
+        html += '<p class="small muted">Completed on <b>' + fmtDate(job.completedAt) + "</b>.</p>";
+      }
       if (job.workNotes) html += "<h3>What we did</h3><p style=\"white-space:pre-wrap\">" + esc(job.workNotes) + "</p>";
       if (job.materials) html += "<h3>Materials used</h3><p style=\"white-space:pre-wrap\">" + esc(job.materials) + "</p>";
       html += '<div class="photo-grid">';
@@ -814,7 +1031,7 @@
         window.scrollTo(0, 0);
       } catch (e) {
         btn.disabled = false; btn.textContent = "Sign & accept";
-        msg.innerHTML = errBox("Something went wrong while signing: " + (e.message || e) + " — please try again or call us.");
+        msg.innerHTML = errBox("Something went wrong while signing: " + (e.message || e) + " — please try again or contact us by email.");
       }
     });
   }

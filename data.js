@@ -16,6 +16,9 @@
  *    deposit, terms, version, signedVersion, signatures:[{version,name,signatureDataUrl,signedAt}],
  *    scheduledAt, workNotes, materials, finalTotal, paymentStatus,
  *    photos:{assessment:[],before:[],after:[]}, copyEmailStatus, copyEmailLog:[],
+ *    completedAt:"", completionEmailStatus:"",
+ *    completionEmailLog:[{at,to,status,note?,photoCounts,embeddedPhotoCount,failedPhotoCount}],
+ *    documents:[{version,kind,pdfDataUrl?,fileUrl?,createdAt}],
  *    sendLog:[{channel, at, to?}], sendEmail:"", createdAt, updatedAt}
  *   sendEmail = recipient typed in the panel's "Send to email" field (last
  *   used on this job; may differ from the client's stored email). Email
@@ -65,7 +68,9 @@
       scheduledAt: "", workNotes: "", materials: "", finalTotal: null,
       paymentStatus: "pending",
       photos: { assessment: [], before: [], after: [] },
-      copyEmailStatus: "", copyEmailLog: [], sendLog: [], sendEmail: "",
+      copyEmailStatus: "", copyEmailLog: [],
+      completedAt: "", completionEmailStatus: "", completionEmailLog: [], documents: [],
+      sendLog: [], sendEmail: "",
       createdAt: nowIso(), updatedAt: nowIso()
     };
   }
@@ -147,13 +152,29 @@
       var db = demoLoad(); var job = findJob(db, jobId); if (!job) throw new Error("Job not found");
       job.photos[kind].splice(idx, 1); job.updatedAt = nowIso(); demoSave(db); return job;
     },
-    // Demo document/email: records the document + SIMULATES the email.
-    // Set job.copyEmailStatus = "failed" before calling to rehearse the
-    // email-failure path (used by the verification suite).
+    // Demo document/email: records the document. For the default
+    // "signed-pdf" kind it also SIMULATES the signed-copy email (legacy
+    // behavior). A "completion-pdf" is only recorded here — completion
+    // state + its simulated email live in Demo.completeJob, so the
+    // signed-copy status/log are never overwritten by a completion.
+    // Set job.copyEmailStatus = "failed" before calling saveDocument for a
+    // signed PDF to rehearse the email-failure path (verification suite).
     saveDocument: async function (jobId, data) {
       var db = demoLoad(); var job = findJob(db, jobId); if (!job) throw new Error("Job not found");
       job.documents = job.documents || [];
-      job.documents.push({ version: data.version, pdfDataUrl: data.pdfDataUrl, createdAt: nowIso() });
+      var kind = data.kind || "signed-pdf";
+      job.documents.push({
+        version: data.version, kind: kind, pdfDataUrl: data.pdfDataUrl || "",
+        fileUrl: data.fileUrl || "", recipient: data.recipient || "",
+        photoCounts: data.photoCounts || null,
+        embeddedPhotoCount: data.embeddedPhotoCount,
+        failedPhotoCount: data.failedPhotoCount,
+        completedAt: data.completedAt || "", createdAt: nowIso()
+      });
+      if (kind === "completion-pdf") {
+        job.updatedAt = nowIso(); demoSave(db);
+        return { ok: true, emailStatus: job.completionEmailStatus || "" };
+      }
       var client = db.clients.filter(function (c) { return c.id === job.clientId; })[0];
       var simulateFailure = job.copyEmailStatus === "failed";
       job.copyEmailLog = job.copyEmailLog || [];
@@ -166,6 +187,31 @@
       job.copyEmailLog.push({ at: nowIso(), to: (client ? client.email : "") + " + " + COMPANY_EMAIL, status: "demo — not sent", note: "Demo mode: no email actually leaves the browser" });
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: "demo — not sent" };
+    },
+    // Demo completion: marks the job Done and SIMULATES the evidence
+    // email (clearly labelled). The completion PDF itself is recorded
+    // separately through saveDocument({kind:"completion-pdf"}).
+    completeJob: async function (idOrToken, data) {
+      var db = demoLoad(); var job = findJob(db, idOrToken); if (!job) throw new Error("Job not found");
+      data = data || {};
+      var recipient = String(data.recipientEmail || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(recipient)) throw new Error("A valid recipient email is required to send the completion PDF");
+      if (!(job.signedVersion > 0) || ["signed", "scheduled", "in_progress", "done"].indexOf(job.status) < 0) {
+        throw new Error("Only a signed job that is scheduled or in progress can be completed");
+      }
+      var completedAt = data.resend && job.completedAt ? job.completedAt : (data.completedAt || nowIso());
+      job.completedAt = completedAt;
+      job.status = "done";
+      job.completionEmailStatus = "demo — not sent";
+      job.completionEmailLog = job.completionEmailLog || [];
+      job.completionEmailLog.push({
+        at: nowIso(), to: recipient, status: "demo — not sent",
+        note: "Demo mode: completion email simulated — no email actually leaves the browser",
+        photoCounts: data.photoCounts || {}, embeddedPhotoCount: data.embeddedPhotoCount,
+        failedPhotoCount: data.failedPhotoCount
+      });
+      job.updatedAt = nowIso(); demoSave(db);
+      return { ok: true, emailStatus: job.completionEmailStatus, completedAt: completedAt, job: job };
     }
   };
 
@@ -187,7 +233,10 @@
       scheduledAt: r.scheduled_at || "", workNotes: r.work_notes || "", materials: r.materials || "",
       finalTotal: r.final_total === null || r.final_total === undefined ? null : Number(r.final_total),
       paymentStatus: r.payment_status, photos: r.photos || { assessment: [], before: [], after: [] },
-      copyEmailStatus: r.copy_email_status || "", copyEmailLog: [], sendLog: r.send_log || [], sendEmail: r.send_email || "",
+      copyEmailStatus: r.copy_email_status || "", copyEmailLog: [],
+      completedAt: r.completed_at || "", completionEmailStatus: r.completion_email_status || "",
+      completionEmailLog: r.completion_email_log || [], documents: [],
+      sendLog: r.send_log || [], sendEmail: r.send_email || "",
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   }
@@ -212,12 +261,16 @@
       var items = await client().from("quote_items").select("*").eq("job_id", jobId).order("sort_order");
       var sigs = await client().from("signatures").select("*").eq("job_id", jobId);
       var photos = await client().from("photos").select("*").eq("job_id", jobId).order("created_at");
-      return { items: items.data || [], sigs: sigs.data || [], photos: photos.data || [] };
+      var docs = await client().from("documents").select("*").eq("job_id", jobId).order("created_at");
+      return { items: items.data || [], sigs: sigs.data || [], photos: photos.data || [], documents: docs.data || [] };
     },
     _assemble: function (r, parts) {
       var job = rowToJob(r, parts.items, parts.sigs);
       job.photos = { assessment: [], before: [], after: [] };
       parts.photos.forEach(function (p) { if (job.photos[p.kind]) job.photos[p.kind].push(p.image_url); });
+      job.documents = (parts.documents || []).map(function (d) {
+        return { version: d.version, kind: d.kind || "signed-pdf", fileUrl: d.file_url || "", pdfDataUrl: "", createdAt: d.created_at };
+      });
       return job;
     },
     listJobs: async function () {
@@ -236,7 +289,10 @@
       var row = { client_id: j.clientId, token: j.token, title: j.title, status: j.status, deposit: j.deposit,
         terms: j.terms, version: j.version, signed_version: j.signedVersion, scheduled_at: j.scheduledAt || null,
         work_notes: j.workNotes, materials: j.materials, final_total: j.finalTotal, payment_status: j.paymentStatus,
-        photos: j.photos, copy_email_status: j.copyEmailStatus, send_log: j.sendLog || [], send_email: j.sendEmail || "" };
+        photos: j.photos, copy_email_status: j.copyEmailStatus,
+        completed_at: j.completedAt || null, completion_email_status: j.completionEmailStatus || "",
+        completion_email_log: j.completionEmailLog || [],
+        send_log: j.sendLog || [], send_email: j.sendEmail || "" };
       var res;
       if (j.id && String(j.id).indexOf("job_") !== 0) res = await client().from("jobs").update(row).eq("id", j.id).select().single();
       else res = await client().from("jobs").insert(row).select().single();
@@ -284,9 +340,33 @@
       return Live.getJob(jobId);
     },
     saveDocument: async function (jobId, data) {
-      var ins = await client().from("documents").insert({ job_id: jobId, version: data.version, kind: "signed-pdf", file_url: data.fileUrl || "" });
+      var kind = data.kind || "signed-pdf";
+      // Completion PDFs are generated in the browser and emailed as an
+      // attachment by the Edge Function; no document-storage upload path
+      // exists today, so the row honestly records "generated-in-portal"
+      // instead of inventing a file URL.
+      var fileUrl = data.fileUrl || (kind === "completion-pdf" ? "generated-in-portal" : "");
+      var ins = await client().from("documents").insert({ job_id: jobId, version: data.version, kind: kind, file_url: fileUrl });
       if (ins.error) throw ins.error;
       return { ok: true, emailStatus: data.emailStatus || "" };
+    },
+    // Live completion: the Edge Function verifies the token + signed
+    // state, marks the job Done server-side (new completed_at, unless
+    // this is a re-send), emails the browser-generated evidence PDF and
+    // records the distinct completion email status/log. An email failure
+    // comes back as {ok:true, emailStatus:"failed"} — completion stands.
+    completeJob: async function (token, data) {
+      data = data || {};
+      var res = await client().functions.invoke("sign-and-email", {
+        body: {
+          action: "complete", token: token, recipientEmail: data.recipientEmail || "",
+          pdfBase64: data.pdfBase64 || null, photoCounts: data.photoCounts || {},
+          embeddedPhotoCount: data.embeddedPhotoCount, failedPhotoCount: data.failedPhotoCount,
+          completedAt: data.completedAt || null, resend: !!data.resend
+        }
+      });
+      if (res.error) throw res.error;
+      return res.data;
     }
   };
 
