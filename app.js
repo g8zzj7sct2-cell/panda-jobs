@@ -117,9 +117,13 @@
   /* Live mode only: shows the signed-in owner and lets them set/change the
      account password (Supabase Auth updateUser). This is how an owner who
      arrived via an email invitation link gets a password they can log in
-     with after that first session ends. Never rendered in demo mode. */
+     with after that first session ends. Never rendered in demo mode.
+     The card stays COLLAPSED (display:none) behind the small "Account"
+     toggle button in the header (#acctToggle) so it doesn't sit in the
+     panel permanently — Rigo's request, since more people will use the
+     app. renderOwner() always starts it hidden; the toggle shows/hides. */
   function accountHTML() {
-    return '<div class="card"><h2>Account</h2>' +
+    return '<div class="card" id="acctCard" style="display:none"><h2>Account</h2>' +
       '<p class="muted small">Signed in as <b>' + esc(liveUserEmail || "your account") + '</b>.</p>' +
       '<p class="small">Set a password for this account — you will need it to log in next time (invitation and recovery links sign you in only once). Use at least 8 characters.</p>' +
       '<label class="f" for="acctPw1">New password</label><input type="password" id="acctPw1" autocomplete="new-password">' +
@@ -137,7 +141,11 @@
     var clients = await D.listClients();
     var jobs = await D.listJobs();
     var byClient = {}; clients.forEach(function (c) { byClient[c.id] = c; });
-    var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
+    /* Live mode: discreet "Account" toggle next to Log out — shows/hides
+       the collapsed Account card (see accountHTML). Demo mode has no
+       account card or toggle at all, header unchanged. */
+    var html = headerHTML((DEMO ? "" : '<button class="btn small light" id="acctToggle" aria-expanded="false" aria-controls="acctCard">Account</button>') +
+      '<button class="btn small light" id="logoutBtn">Log out</button>');
     html += '<nav class="owner-nav">' +
       '<button data-tab="jobs" class="' + (ownerTab === "jobs" ? "on" : "") + '">Jobs</button>' +
       '<button data-tab="clients" class="' + (ownerTab === "clients" ? "on" : "") + '">Clients</button>' +
@@ -548,6 +556,18 @@
 
   function wireOwner(clients, jobs, byClient) {
     document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    /* Account toggle (live mode only): the card renders collapsed on every
+       render/route change; clicking "Account" in the header shows/hides it
+       in place — no re-render, so typed passwords are never clobbered by
+       toggling and the card never lingers open across tabs. */
+    var acctToggle = document.getElementById("acctToggle");
+    if (acctToggle) acctToggle.addEventListener("click", function () {
+      var card = document.getElementById("acctCard");
+      if (!card) return;
+      var show = card.style.display === "none";
+      card.style.display = show ? "" : "none";
+      acctToggle.setAttribute("aria-expanded", show ? "true" : "false");
+    });
     /* Account card (live mode only): set/change the owner's password. Works
        for any live session — including one that started from an email
        invitation or recovery link, which is the primary case. */
