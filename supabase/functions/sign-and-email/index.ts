@@ -3,6 +3,22 @@
 // POST { action: "sign", token, name, signatureDataUrl, acceptedOptionals: number[], pdfBase64? }
 // POST { action: "complete", token, recipientEmail, pdfBase64, photoCounts,
 //        embeddedPhotoCount?, failedPhotoCount?, completedAt?, resend? }
+// POST { action: "send-quote", token, recipientEmail }   (owner JWT required)
+//
+// action "send-quote" (owner presses "Email" in the panel — added
+// 2026-10-28 after Rigo found the old mailto button never sent anything):
+//   1. Require a signed-in owner: the panel's supabase-js invoke attaches
+//      the owner's session JWT; it is verified with the ANON key client.
+//      The client token alone is NOT enough (a link holder must not be
+//      able to trigger quote emails).
+//   2. Load the job + its quote items by token (service role).
+//   3. Email the quote (summary + totals + the client link) to the
+//      recipient the owner typed, bcc to the company, via the same
+//      Gmail SMTP path as the other actions.
+//   4. ONLY on success, record the send in the job's send_log (channel
+//      "Email", recipient), remember send_email and advance a draft to
+//      "quote" — the panel history therefore only lists REAL sends.
+//      A failed send logs nothing and returns emailStatus "failed".
 //
 // action "complete" (owner presses "Complete job" in the panel):
 //   1. Verify the token identifies a SIGNED job in a completable state
@@ -62,6 +78,10 @@ const COMPANY = {
 const SENDER = {
   email: "rigo.technician.hvac@gmail.com",
 };
+
+// Public base URL of the deployed app (same value as config.js
+// APP_PUBLIC_URL) — the quote email carries the client's personal link.
+const APP_URL = "https://g8zzj7sct2-cell.github.io/panda-jobs/";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -137,7 +157,7 @@ async function completeJob(
   let emailStatus: "sent" | "failed" = "failed";
   let emailError = "";
   try {
-    const appPassword = Deno.env.get("GMAIL_APP_PASSWORD");
+    const appPassword = (Deno.env.get("GMAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
     if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
     const smtp = new SMTPClient({
       connection: {
@@ -148,25 +168,27 @@ async function completeJob(
       },
     });
     const attempted = photoCounts.assessment + photoCounts.before + photoCounts.after;
+    const completeText = [
+      `Hi ${client.name ?? "there"},`,
+      ``,
+      `Your job "${job.title ?? "Heating / cooling service"}" is complete. The completion report is attached as a PDF.`,
+      `Completed: ${new Date(completedAt).toLocaleString("en-US")}`,
+      `Photo evidence in the report: ${embeddedPhotoCount} of ${attempted} photo(s) embedded` +
+        (failedPhotoCount ? ` (${failedPhotoCount} could not be embedded).` : "."),
+      ``,
+      `You can also review the work, photos and your signed agreement any time from your personal link — keep that email.`,
+      `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
+      ``,
+      `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
+    ].join("\n");
     await smtp.send({
       from: `${COMPANY.name} <${SENDER.email}>`,
       replyTo: COMPANY.email,
       to: [recipient],
       bcc: [COMPANY.email], // company copy
-      subject: `Your job completion report — ${COMPANY.name}`,
-      content: [
-        `Hi ${client.name ?? "there"},`,
-        ``,
-        `Your job "${job.title ?? "Heating / cooling service"}" is complete. The completion report is attached as a PDF.`,
-        `Completed: ${new Date(completedAt).toLocaleString("en-US")}`,
-        `Photo evidence in the report: ${embeddedPhotoCount} of ${attempted} photo(s) embedded` +
-          (failedPhotoCount ? ` (${failedPhotoCount} could not be embedded).` : "."),
-        ``,
-        `You can also review the work, photos and your signed agreement any time from your personal link — keep that email.`,
-        `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
-        ``,
-        `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
-      ].join("\n"),
+      subject: `Your job completion report - ${COMPANY.name}`,
+      content: asciiSafe(completeText),
+      html: htmlFromText(completeText),
       attachments: [{
         filename: "Angry-Panda-Job-Completion-Report.pdf",
         contentType: "application/pdf",
@@ -199,6 +221,228 @@ async function completeJob(
   });
 }
 
+function usd(n: number): string {
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+/* Email rendering (Rigo, 2026-10-28): clients must NOT see the raw
+   GitHub Pages URL, and Apple Mail was mangling the em dashes and
+   bullets of the plain-text mail ("no heat" â€") because the text part
+   carries no reliable UTF-8 declaration. So every client email now
+   goes out as multipart: an HTML part (UTF-8, the personal link shown
+   as a labeled button, punctuation intact) + a plain-text part with
+   ASCII-safe punctuation that can never garble. */
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function asciiSafe(s: string): string {
+  return s.replace(/—/g, "-").replace(/–/g, "-").replace(/•/g, "|")
+    .replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+}
+function htmlFromText(text: string, link?: { url: string; label: string }): string {
+  let body = escHtml(text);
+  if (link) {
+    const u = escHtml(link.url);
+    const btn = `<a href="${u}" style="display:inline-block;background:#1d7a3a;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold">${escHtml(link.label)}</a>`;
+    body = body.split(u).join(btn);
+  }
+  body = body.replace(/\n/g, "<br>");
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:560px">${body}</div>`;
+}
+/* Appointment display: the owner types the date/time into a
+   datetime-local field, so the stored components ARE the wall clock
+   the client must see — format them as stored, never tz-shifted. */
+function formatAppt(iso: string): string {
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return String(iso);
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const y = +m[1], mo = +m[2], d = +m[3], hh = +m[4], mm = +m[5];
+  const dow = days[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  const ampm = hh >= 12 ? "PM" : "AM";
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  const mins = mm === 0 ? "" : ":" + String(mm).padStart(2, "0");
+  return `${dow}, ${months[mo - 1]} ${d}, ${y} at ${h12}${mins} ${ampm}`;
+}
+
+async function sendQuote(
+  payload: Record<string, unknown>,
+  supabase: ReturnType<typeof createClient>,
+): Promise<Response> {
+  const token = String(payload.token ?? "");
+  const recipient = String(payload.recipientEmail ?? "").trim();
+  if (!token || !EMAIL_RE.test(recipient)) {
+    return json({ error: "token and a valid recipientEmail are required" }, 400);
+  }
+
+  // 1) Job + client by token (service role — server-side only)
+  const { data: job, error: jobErr } = await supabase
+    .from("jobs").select("*, clients(*)").eq("token", token).single();
+  if (jobErr || !job) return json({ error: "Link not valid" }, 404);
+
+  // 2) Quote items for the summary
+  const { data: items } = await supabase
+    .from("quote_items")
+    .select("description, qty, price, optional, accepted")
+    .eq("job_id", job.id).order("sort_order");
+  const rows = items ?? [];
+  const included = rows.filter((i) => i.accepted);
+  const total = included.reduce((s, i) => s + Number(i.qty) * Number(i.price), 0);
+  const pendingOptionals = rows.some((i) => i.optional && !i.accepted);
+
+  const client = (job as { clients?: { email?: string; name?: string } }).clients ?? {};
+  const firstName = (client.name ?? "").split(" ")[0] || "there";
+  const link = `${APP_URL}#/c/${token}`;
+
+  const lines: string[] = [
+    `Hi ${firstName},`,
+    ``,
+    `This is ${COMPANY.name}. Here is your quote for "${job.title ?? "Heating / cooling service"}" — tap your personal link to review it in detail and sign when you're ready:`,
+    ``,
+    link,
+    ``,
+    `Quote summary:`,
+  ];
+  for (const i of included) {
+    const qty = Number(i.qty), price = Number(i.price);
+    lines.push(
+      `- ${i.description} — ${usd(qty * price)}` +
+      (qty !== 1 ? ` (${qty} × ${usd(price)})` : "") +
+      (i.optional ? " (optional)" : ""),
+    );
+  }
+  lines.push(`Total: ${usd(total)}`);
+  if (Number(job.deposit ?? 0) > 0) lines.push(`Deposit due: ${usd(Number(job.deposit))}`);
+  if (pendingOptionals) lines.push(`Optional add-ons are also waiting for you in your link.`);
+  lines.push(
+    ``,
+    `Questions? Just reply to this email or write to ${COMPANY.email}.`,
+    ``,
+    `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
+  );
+
+  // 3) Send (same Gmail SMTP path as the other actions)
+  let emailError = "";
+  try {
+    const appPassword = (Deno.env.get("GMAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
+    if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
+    const smtp = new SMTPClient({
+      connection: {
+        hostname: "smtp.gmail.com",
+        port: 465,
+        tls: true,
+        auth: { username: SENDER.email, password: appPassword },
+      },
+    });
+    await smtp.send({
+      from: `${COMPANY.name} <${SENDER.email}>`,
+      replyTo: COMPANY.email,
+      to: [recipient],
+      bcc: [COMPANY.email], // company copy
+      subject: `Your quote from ${COMPANY.name}`,
+      content: asciiSafe(lines.join("\n")),
+      html: htmlFromText(lines.join("\n"), { url: link, label: "Review & sign your quote" }),
+    });
+    await smtp.close();
+  } catch (e) {
+    emailError = e instanceof Error ? e.message : String(e);
+  }
+  if (emailError) return json({ ok: true, emailStatus: "failed", emailError });
+
+  // 4) The send really happened — record it in the job's history.
+  const priorLog = Array.isArray(job.send_log) ? job.send_log : [];
+  const upd: Record<string, unknown> = {
+    send_log: [...priorLog, { channel: "Email", at: new Date().toISOString(), to: recipient }],
+    send_email: recipient,
+    updated_at: new Date().toISOString(),
+  };
+  if (job.status === "draft") upd.status = "quote";
+  await supabase.from("jobs").update(upd).eq("id", job.id);
+
+  return json({ ok: true, emailStatus: "sent" });
+}
+
+/* ---------------- appointment email (owner action "send-schedule") ---
+   Rigo's rule (2026-10-28): when the appointment (schedule) is set or
+   changed, the client automatically gets an email WITH THE DATE. The
+   panel calls this right after saving a changed appointment. Sends to
+   the client's email on file; the send is recorded in the job history
+   ONLY when it really went out. */
+async function sendSchedule(
+  payload: Record<string, unknown>,
+  supabase: ReturnType<typeof createClient>,
+): Promise<Response> {
+  const token = String(payload.token ?? "");
+  if (!token) return json({ error: "token is required" }, 400);
+
+  const { data: job, error: jobErr } = await supabase
+    .from("jobs").select("*, clients(*)").eq("token", token).single();
+  if (jobErr || !job) return json({ error: "job not found" }, 404);
+  if (!job.scheduled_at) return json({ error: "no appointment set on this job" }, 400);
+
+  const client = (job as { clients?: { email?: string; name?: string; address?: string } }).clients ?? {};
+  const recipient = String(client.email ?? "").trim();
+  if (!EMAIL_RE.test(recipient)) return json({ error: "no client email on file" }, 400);
+  const firstName = (client.name ?? "").split(" ")[0] || "there";
+  const link = `${APP_URL}#/c/${token}`;
+  const when = formatAppt(String(job.scheduled_at));
+
+  const lines: string[] = [
+    `Hi ${firstName},`,
+    ``,
+    `This is ${COMPANY.name}. Your appointment for "${job.title ?? "Heating / cooling service"}" is scheduled for:`,
+    ``,
+    when,
+    ``,
+  ];
+  if (client.address) lines.push(`We'll come to: ${client.address}`, ``);
+  lines.push(
+    `You can see your job details anytime from your personal link:`,
+    link,
+    ``,
+    `If you need to reschedule, just reply to this email and we'll find another day.`,
+    ``,
+    `Questions? Just reply to this email or write to ${COMPANY.email}.`,
+    ``,
+    `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
+  );
+  const text = lines.join("\n");
+
+  let emailError = "";
+  try {
+    const appPassword = (Deno.env.get("GMAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
+    if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
+    const smtp = new SMTPClient({
+      connection: {
+        hostname: "smtp.gmail.com",
+        port: 465,
+        tls: true,
+        auth: { username: SENDER.email, password: appPassword },
+      },
+    });
+    await smtp.send({
+      from: `${COMPANY.name} <${SENDER.email}>`,
+      replyTo: COMPANY.email,
+      to: [recipient],
+      bcc: [COMPANY.email], // company copy
+      subject: `Your appointment - ${COMPANY.name}`,
+      content: asciiSafe(text),
+      html: htmlFromText(text, { url: link, label: "View your job details" }),
+    });
+    await smtp.close();
+  } catch (e) {
+    emailError = e instanceof Error ? e.message : String(e);
+  }
+  if (emailError) return json({ ok: true, emailStatus: "failed", emailError });
+
+  const priorLog = Array.isArray(job.send_log) ? job.send_log : [];
+  await supabase.from("jobs").update({
+    send_log: [...priorLog, { channel: "Email", at: new Date().toISOString(), to: recipient, kind: "schedule" }],
+    updated_at: new Date().toISOString(),
+  }).eq("id", job.id);
+
+  return json({ ok: true, emailStatus: "sent" });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -214,6 +458,29 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   if (payload.action === "complete") return await completeJob(payload, supabase);
+  if (payload.action === "send-quote") {
+    // Owner-only action: verify the caller's Supabase session JWT (the
+    // panel attaches it automatically via functions.invoke).
+    const anon = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } },
+    );
+    const { data: userData } = await anon.auth.getUser();
+    if (!userData?.user) return json({ error: "Owner sign-in required" }, 401);
+    return await sendQuote(payload, supabase);
+  }
+  if (payload.action === "send-schedule") {
+    // Owner-only action, same session gate as send-quote.
+    const anon = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } },
+    );
+    const { data: userData } = await anon.auth.getUser();
+    if (!userData?.user) return json({ error: "Owner sign-in required" }, 401);
+    return await sendSchedule(payload, supabase);
+  }
   if (payload.action !== "sign") return json({ error: "Unknown action" }, 400);
 
   const token = String(payload.token ?? "");
@@ -277,7 +544,7 @@ Deno.serve(async (req: Request) => {
   let emailError = "";
 
   try {
-    const appPassword = Deno.env.get("GMAIL_APP_PASSWORD");
+    const appPassword = (Deno.env.get("GMAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
     if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
     if (!clientEmail) throw new Error("Client has no email on file");
 
@@ -301,23 +568,27 @@ Deno.serve(async (req: Request) => {
         }]
       : undefined;
 
+    const signText = [
+      `Hi ${client.name ?? "there"},`,
+      ``,
+      `Thank you! Your signed agreement (version ${job.version}) with ${COMPANY.name} is attached to this email as a PDF.`,
+      `Signed by: ${name} — ${new Date(signedAt).toLocaleString("en-US")}`,
+      ``,
+      `Next step — your installation day: just reply to this email and suggest the day that works best for you, and we'll confirm your appointment right away.`,
+      ``,
+      `You can always review your quote, your signed copy, your appointment and your before/after photos from your personal link — keep this email.`,
+      `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
+      ``,
+      `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
+    ].join("\n");
     await smtp.send({
       from: `${COMPANY.name} <${SENDER.email}>`,
       replyTo: COMPANY.email,
       to: [clientEmail],
       bcc: [COMPANY.email], // company copy
-      subject: `Your signed agreement — ${COMPANY.name}`,
-      content: [
-        `Hi ${client.name ?? "there"},`,
-        ``,
-        `Thank you! Your signed agreement (version ${job.version}) with ${COMPANY.name} is attached to this email as a PDF.`,
-        `Signed by: ${name} — ${new Date(signedAt).toLocaleString("en-US")}`,
-        ``,
-        `You can always review your quote, your signed copy, your appointment and your before/after photos from your personal link — keep this email.`,
-        `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
-        ``,
-        `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
-      ].join("\n"),
+      subject: `Your signed agreement - ${COMPANY.name}`,
+      content: asciiSafe(signText),
+      html: htmlFromText(signText),
       attachments,
     });
     await smtp.close();
