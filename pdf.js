@@ -156,7 +156,7 @@
    * that cannot be loaded/embedded is counted and named in the report —
    * never silently dropped. Returns {doc, stats} so the caller can
    * report exactly how much evidence made it into the PDF. */
-  async function imageSourceToJpeg(src) {
+  async function imageSourceToJpeg(src, maxDim, quality) {
     if (!src) throw new Error("Empty photo source");
     var objectUrl = null;
     var url = src;
@@ -175,7 +175,7 @@
         im.src = url;
       });
       if (!img.naturalWidth || !img.naturalHeight) throw new Error("Photo has no dimensions");
-      var maxDim = 1400;
+      maxDim = maxDim || 1400;
       var scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
       var w = Math.max(1, Math.round(img.naturalWidth * scale));
       var h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -184,7 +184,7 @@
       var ctx = canvas.getContext("2d");
       ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
-      return { dataUrl: canvas.toDataURL("image/jpeg", 0.84), width: w, height: h };
+      return { dataUrl: canvas.toDataURL("image/jpeg", quality || 0.84), width: w, height: h };
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     }
@@ -302,7 +302,8 @@
       for (var pi = 0; pi < photos.length; pi++) {
         var caption = g.caption + " " + (pi + 1);
         try {
-          var loaded = await imageSourceToJpeg(photos[pi]);
+          var prof = opts.photoProfile || {};
+          var loaded = await imageSourceToJpeg(photos[pi], prof.maxDim, prof.quality);
           var iw = Math.min(maxW, 460);
           var ih = iw * loaded.height / loaded.width;
           if (ih > 320) { ih = 320; iw = ih * loaded.width / loaded.height; }
@@ -336,9 +337,29 @@
     return { doc: doc, stats: { photoCounts: counts, attemptedPhotoCount: attempted, embeddedPhotoCount: embedded, failedPhotoCount: failed } };
   }
 
+  /* The mail worker has a hard CPU ceiling: a completion PDF much above
+     ~2 MB kills the send (verified live: 2 MB passes, 4 MB dies with a
+     resource-limit error). Build at full photo quality first and step
+     the photos down only until the PDF fits the safe budget, so small
+     jobs keep maximum quality and photo-heavy jobs still send. */
+  var COMPLETION_B64_BUDGET = 2750000; // ~2.0 MB of PDF
+  var PHOTO_PROFILES = [
+    { maxDim: 1400, quality: 0.84 },
+    { maxDim: 1100, quality: 0.74 },
+    { maxDim: 900, quality: 0.64 },
+    { maxDim: 760, quality: 0.55 }
+  ];
   async function completionBase64(job, client, opts) {
-    var r = await buildCompletionPdf(job, client, opts);
-    return { base64: r.doc.output("datauristring").split(",")[1], stats: r.stats };
+    opts = opts || {};
+    var last = null;
+    for (var i = 0; i < PHOTO_PROFILES.length; i++) {
+      var o2 = Object.assign({}, opts, { photoProfile: PHOTO_PROFILES[i] });
+      var r = await buildCompletionPdf(job, client, o2);
+      var b64 = r.doc.output("datauristring").split(",")[1];
+      last = { base64: b64, stats: r.stats };
+      if (b64.length <= COMPLETION_B64_BUDGET) break;
+    }
+    return last;
   }
   async function completionDataUrl(job, client, opts) {
     var r = await buildCompletionPdf(job, client, opts);

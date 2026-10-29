@@ -226,6 +226,19 @@
       if (job.status === "draft") job.status = "quote";
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: "sent", demo: true, job: job };
+    },
+    // Demo appointment email: SIMULATES the server "send-schedule"
+    // action and records the send in the job history like the server.
+    sendScheduleEmail: async function (idOrToken) {
+      var db = demoLoad(); var job = findJob(db, idOrToken); if (!job) throw new Error("Job not found");
+      if (!job.scheduledAt) throw new Error("No appointment date set on this job");
+      var client = db.clients.filter(function (c) { return c.id === job.clientId; })[0];
+      var to = client ? (client.email || "") : "";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(to)) throw new Error("No client email on file");
+      job.sendLog = job.sendLog || [];
+      job.sendLog.push({ channel: "Email", at: nowIso(), to: to, kind: "schedule" });
+      job.updatedAt = nowIso(); demoSave(db);
+      return { ok: true, emailStatus: "sent", demo: true, job: job };
     }
   };
 
@@ -389,6 +402,16 @@
     sendQuoteEmail: async function (token, recipientEmail) {
       var res = await client().functions.invoke("sign-and-email", {
         body: { action: "send-quote", token: token, recipientEmail: recipientEmail }
+      });
+      if (res.error) throw res.error;
+      return res.data;
+    },
+    // Live appointment email: the Edge Function verifies the owner's
+    // session, reads the job's saved appointment and emails the client
+    // the date, recording the send in the job history server-side.
+    sendScheduleEmail: async function (token) {
+      var res = await client().functions.invoke("sign-and-email", {
+        body: { action: "send-schedule", token: token }
       });
       if (res.error) throw res.error;
       return res.data;

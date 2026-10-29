@@ -402,11 +402,29 @@
       "</div>";
 
     /* Quote builder — STEP 1 of the simplified detail flow:
-       1 Quote → 2 Send → 3 Schedule, work & photos. */
+       1 Quote → 2 Send → 3 Schedule, work & photos.
+       Stage-clean rule (Rigo, 2026-10-28): once the job leaves the
+       quote stages, the editing tools of earlier stages disappear —
+       the quote becomes a read-only summary from "signed" on, and the
+       send card (step 2) goes away from "scheduled" on — so the work
+       screen only shows what the current stage actually uses. */
+    var quoteEditable = (job.status === "draft" || job.status === "quote");
+    var showSend = ["draft", "quote", "signed"].indexOf(job.status) >= 0;
     html += '<div class="card step"><h2><span class="stepn">1</span>Quote / contract — version ' + job.version + "</h2>";
-    if (locked) html += '<div class="notice ok"><b>Signed</b> by ' + esc(sig.name) + " on " + fmtDate(sig.signedAt) + ". This version is locked. Saving any change below creates version " + (job.version + 1) + " and the client must sign again — the signed version stays intact.</div>";
+    if (locked) html += '<div class="notice ok"><b>Signed</b> by ' + esc(sig.name) + " on " + fmtDate(sig.signedAt) + ". This version is locked.</div>";
     else if (sig) html += '<div class="notice warn">Version ' + sig.version + " was <b>signed</b> by " + esc(sig.name) + " on " + fmtDate(sig.signedAt) + " and stays intact. This is version " + job.version + " — <b>not signed yet</b>; the client must sign it from their link.</div>";
     if (job.copyEmailStatus === "failed") html += '<div class="notice bad"><b>Copy email failed.</b> The signature and PDF are saved; the client can still download the PDF from their portal. Check the client email and re-send from the Documents section.</div>';
+    if (!quoteEditable) {
+      job.items.forEach(function (it) {
+        html += '<div class="list-row"><div class="grow">' + esc(it.desc || "Item") +
+          (it.optional ? ' <span class="pill">' + (it.accepted ? "Optional · accepted" : "Optional · not accepted") + "</span>" : "") +
+          '</div><span class="small">' + (it.qty || 1) + " × " + money(it.price) + "</span></div>";
+      });
+      if (job.deposit) html += '<p class="small muted">Deposit due at signing: ' + money(job.deposit) + "</p>";
+      html += '<p><b>Quote total: ' + money(window.PandaPDF.total(job)) + "</b></p>";
+      html += '<details class="ref"><summary>Terms &amp; conditions — as agreed</summary><p class="small" style="white-space:pre-wrap;margin-top:8px">' + esc(job.terms) + "</p></details>";
+      html += '<div class="btn-row"><button class="btn ghost" id="ownerPdf">Download PDF</button></div></div>';
+    } else {
     html += '<div id="qrows">';
     job.items.forEach(function (it, i) { html += qrowHTML(it, i); });
     html += "</div>";
@@ -419,6 +437,8 @@
     html += '<details class="ref"><summary>Terms &amp; conditions — shown to the client, included in the PDF</summary><textarea id="jd_terms" style="min-height:170px;margin-top:10px">' + esc(job.terms) + "</textarea></details>";
     html += '<div class="btn-row"><button class="btn primary" id="saveQuote">Save quote</button>' +
       '<button class="btn ghost" id="ownerPdf">Download PDF</button></div></div>';
+    }
+    if (showSend) {
     html += '<div class="card step"><h2><span class="stepn">2</span>Send to client</h2><p class="small muted">Client link (unique, no password). Send it straight from here:</p>' +
       '<code class="linkbox">' + esc(link) + "</code>";
     if (isDemoLink) html += '<p class="notice warn" id="demoLinkWarn">Demo link — only opens on this device until the app is deployed.</p>';
@@ -442,6 +462,7 @@
     html += '<div class="btn-row"><button class="btn light" id="copySms">Copy ready-to-send text</button>' +
       '<button class="btn light" id="regenToken">Regenerate link</button></div>' +
       '<p class="small muted">Regenerating the link makes the old one stop working.</p></div>';
+    }
 
     /* Signatures & documents */
     html += '<div class="card"><h2>Signatures & documents</h2>';
@@ -509,7 +530,7 @@
         (job.status === "done" && job.completionEmailStatus !== "sent"
           ? '<button class="btn primary" id="resendCompletionBtn">Re-send completion PDF</button>' : "") +
         "</div>" +
-        (job.status === "invoiced"
+        ((job.status === "invoiced" || job.status === "done")
           ? '<div class="btn-row"><button class="btn primary block" id="archiveJobBtn">🏁 Complete &amp; move to History</button></div>' +
             '<p class="small muted">Finished for good? This takes the job off the board and files it in <b>History</b> (photos, installation date &amp; time, notes, invoice and signed contract), searchable by name, phone or email.</p>'
           : "");
@@ -592,7 +613,8 @@
     }
     document.getElementById("backBtn").addEventListener("click", function () { ownerTab = "jobs"; renderOwner(); });
     document.getElementById("logoutBtn").addEventListener("click", doLogout);
-    document.getElementById("addItem").addEventListener("click", async function () {
+    var addItemBtn = document.getElementById("addItem");
+    if (addItemBtn) addItemBtn.addEventListener("click", async function () {
       readQuoteFromForm(job); job.items.push({ desc: "", qty: 1, price: 0, optional: false, accepted: true });
       await D.saveJob(job); renderJobDetail(job.id);
     });
@@ -600,7 +622,8 @@
     document.querySelectorAll("[data-del-item]").forEach(function (b) {
       b.addEventListener("click", async function () { readQuoteFromForm(job); job.items.splice(+b.getAttribute("data-del-item"), 1); await D.saveJob(job); renderJobDetail(job.id); });
     });
-    document.getElementById("saveQuote").addEventListener("click", async function () {
+    var saveQuoteBtn = document.getElementById("saveQuote");
+    if (saveQuoteBtn) saveQuoteBtn.addEventListener("click", async function () {
       var before = JSON.stringify({ i: job.items, d: job.deposit, t: job.terms, ti: job.title });
       readQuoteFromForm(job);
       var after = JSON.stringify({ i: job.items, d: job.deposit, t: job.terms, ti: job.title });
@@ -614,7 +637,7 @@
       setTimeout(function () { renderJobDetail(job.id); }, 900);
     });
     document.getElementById("ownerPdf").addEventListener("click", async function () {
-      readQuoteFromForm(job);
+      if (document.getElementById("jd_deposit")) readQuoteFromForm(job);
       await window.PandaPDF.download(job, client, { filename: "angry-panda-quote-v" + job.version + ".pdf" });
     });
     document.getElementById("docPdf").addEventListener("click", async function () {
@@ -622,8 +645,10 @@
       var sig = signedSig(job) || job.signatures[job.signatures.length - 1];
       await window.PandaPDF.download(job, client, { version: sig.version, filename: "angry-panda-signed-v" + sig.version + ".pdf" });
     });
-    document.getElementById("copyLink").addEventListener("click", function () { copyText(link, this); });
-    document.getElementById("copySms").addEventListener("click", function () { copyText(sendMsg, this); });
+    var copyLinkBtn = document.getElementById("copyLink");
+    if (copyLinkBtn) copyLinkBtn.addEventListener("click", function () { copyText(link, this); });
+    var copySmsBtn = document.getElementById("copySms");
+    if (copySmsBtn) copySmsBtn.addEventListener("click", function () { copyText(sendMsg, this); });
     var smsEl = document.getElementById("sendSms");
     if (smsEl && !smsEl.classList.contains("disabled")) smsEl.addEventListener("click", function () { logSend("Text message"); });
     /* Editable recipient email: the Email button sends the quote FOR
@@ -697,11 +722,13 @@
         msg.innerHTML = '<div class="notice ok">Client email updated to ' + esc(addr) + ".</div>";
       } catch (err2) { msg.innerHTML = errBox("Could not update the client email: " + (err2.message || err2)); }
     });
-    document.getElementById("regenToken").addEventListener("click", async function () {
+    var regenBtn = document.getElementById("regenToken");
+    if (regenBtn) regenBtn.addEventListener("click", async function () {
       if (!confirm("Regenerate the client link? The old link will stop working.")) return;
       job.token = D.newToken(); await D.saveJob(job); renderJobDetail(job.id);
     });
     document.getElementById("saveExec").addEventListener("click", async function () {
+      var prevSched = job.scheduledAt || "";
       job.workNotes = document.getElementById("jd_notes").value;
       job.materials = document.getElementById("jd_materials").value;
       var f = document.getElementById("jd_final").value;
@@ -710,7 +737,27 @@
       job.status = document.getElementById("jd_status").value;
       job.scheduledAt = document.getElementById("jd_sched").value;
       await D.saveJob(job);
-      msg.innerHTML = '<div class="notice ok">Execution details saved — the client portal is updated.</div>'; window.scrollTo(0, 0);
+      /* Appointment rule (Rigo, 2026-10-28): when the schedule is set
+         or changed, the client automatically gets an email with the
+         date — no extra button. Only fires on an actual change to a
+         non-empty date, so plain saves never spam the client. */
+      var newSched = job.scheduledAt || "";
+      if (newSched && newSched !== prevSched) {
+        if (client && validEmail(client.email || "")) {
+          try {
+            var sr = await D.sendScheduleEmail(job.token);
+            if (sr && sr.ok) msg.innerHTML = '<div class="notice ok">Execution details saved. 📧 Appointment email sent to ' + esc(client.email) + " with the date.</div>";
+            else msg.innerHTML = '<div class="notice warn">Execution details saved, but the appointment email was not sent — save again to retry.</div>';
+          } catch (e) {
+            msg.innerHTML = '<div class="notice warn">Execution details saved, but the appointment email failed (' + esc((e && e.message) || e) + ") — save again to retry.</div>";
+          }
+        } else {
+          msg.innerHTML = '<div class="notice warn">Execution details saved. No valid client email on file, so no appointment email was sent.</div>';
+        }
+      } else {
+        msg.innerHTML = '<div class="notice ok">Execution details saved — the client portal is updated.</div>';
+      }
+      window.scrollTo(0, 0);
     });
     /* ---------- Complete job ----------
        Flow: open panel (no writes) -> Cancel leaves everything untouched
