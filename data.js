@@ -189,13 +189,13 @@
       return { ok: true, emailStatus: "demo — not sent" };
     },
     // Demo completion: marks the job Done and SIMULATES the evidence
-    // email (clearly labelled). The completion PDF itself is recorded
-    // separately through saveDocument({kind:"completion-pdf"}).
+    // email (clearly labelled) — summary + photos in the email itself,
+    // no PDF attachment, mirroring the live function.
     completeJob: async function (idOrToken, data) {
       var db = demoLoad(); var job = findJob(db, idOrToken); if (!job) throw new Error("Job not found");
       data = data || {};
       var recipient = String(data.recipientEmail || "").trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(recipient)) throw new Error("A valid recipient email is required to send the completion PDF");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(recipient)) throw new Error("A valid recipient email is required to send the evidence email");
       if (!(job.signedVersion > 0) || ["signed", "scheduled", "in_progress", "done"].indexOf(job.status) < 0) {
         throw new Error("Only a signed job that is scheduled or in progress can be completed");
       }
@@ -204,11 +204,16 @@
       job.status = "done";
       job.completionEmailStatus = "demo — not sent";
       job.completionEmailLog = job.completionEmailLog || [];
+      var pc = {
+        assessment: (job.photos.assessment || []).length,
+        before: (job.photos.before || []).length,
+        after: (job.photos.after || []).length
+      };
       job.completionEmailLog.push({
         at: nowIso(), to: recipient, status: "demo — not sent",
-        note: "Demo mode: completion email simulated — no email actually leaves the browser",
-        photoCounts: data.photoCounts || {}, embeddedPhotoCount: data.embeddedPhotoCount,
-        failedPhotoCount: data.failedPhotoCount
+        note: "Demo mode: evidence email simulated — no email actually leaves the browser",
+        photoCounts: pc, embeddedPhotoCount: pc.assessment + pc.before + pc.after,
+        failedPhotoCount: 0
       });
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: job.completionEmailStatus, completedAt: completedAt, job: job };
@@ -379,16 +384,16 @@
     },
     // Live completion: the Edge Function verifies the token + signed
     // state, marks the job Done server-side (new completed_at, unless
-    // this is a re-send), emails the browser-generated evidence PDF and
-    // records the distinct completion email status/log. An email failure
-    // comes back as {ok:true, emailStatus:"failed"} — completion stands.
+    // this is a re-send) and emails the EVIDENCE IN THE EMAIL ITSELF —
+    // summary, totals and the job photos, no PDF attachment (the giant
+    // base64 PDF kept killing the mail worker; Rigo's call 2026-10-28).
+    // An email failure comes back as {ok:true, emailStatus:"failed"} —
+    // the completion stands either way.
     completeJob: async function (token, data) {
       data = data || {};
       var res = await client().functions.invoke("sign-and-email", {
         body: {
           action: "complete", token: token, recipientEmail: data.recipientEmail || "",
-          pdfBase64: data.pdfBase64 || null, photoCounts: data.photoCounts || {},
-          embeddedPhotoCount: data.embeddedPhotoCount, failedPhotoCount: data.failedPhotoCount,
           completedAt: data.completedAt || null, resend: !!data.resend
         }
       });

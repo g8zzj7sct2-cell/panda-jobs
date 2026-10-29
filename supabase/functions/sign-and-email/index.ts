@@ -109,24 +109,15 @@ async function completeJob(
 ): Promise<Response> {
   const token = String(payload.token ?? "");
   const recipient = String(payload.recipientEmail ?? "").trim();
-  const pdfBase64 = typeof payload.pdfBase64 === "string" ? payload.pdfBase64 : null;
   const resend = payload.resend === true;
-  const rawCounts = (payload.photoCounts ?? {}) as Record<string, unknown>;
-  const photoCounts = {
-    assessment: cleanCount(rawCounts.assessment),
-    before: cleanCount(rawCounts.before),
-    after: cleanCount(rawCounts.after),
-  };
-  const embeddedPhotoCount = cleanCount(payload.embeddedPhotoCount);
-  const failedPhotoCount = cleanCount(payload.failedPhotoCount);
   const requestedCompletedAt = typeof payload.completedAt === "string" && payload.completedAt
     ? payload.completedAt
     : null;
   if (requestedCompletedAt && Number.isNaN(Date.parse(requestedCompletedAt))) {
     return json({ error: "completedAt is not a valid date" }, 400);
   }
-  if (!token || !EMAIL_RE.test(recipient) || !pdfBase64 || pdfBase64.length < 100) {
-    return json({ error: "token, a valid recipientEmail and the completion PDF are required" }, 400);
+  if (!token || !EMAIL_RE.test(recipient)) {
+    return json({ error: "token and a valid recipientEmail are required" }, 400);
   }
 
   // 1) Job by token (service role — server-side only)
@@ -152,8 +143,35 @@ async function completeJob(
   }).eq("id", job.id);
   if (doneErr) return json({ error: "Could not mark the job done: " + doneErr.message }, 500);
 
-  // 4) Email the evidence PDF (client + company bcc copy)
+  // 4) Email the evidence IN the email (client + company bcc copy).
+  //    Rigo's call (2026-10-28): no PDF attachment — the giant base64
+  //    PDF kept killing the worker (CPU limit). The email itself now
+  //    carries the summary, the totals and the photos (hosted images),
+  //    plus the portal button where the signed agreement lives.
   const client = (job as { clients?: { email?: string; name?: string } }).clients ?? {};
+  const photos = (job.photos ?? {}) as Record<string, unknown>;
+  const photoGroups = [
+    { kind: "assessment", label: "Assessment photos" },
+    { kind: "before", label: "BEFORE photos" },
+    { kind: "after", label: "AFTER photos" },
+  ].map((g) => ({
+    ...g,
+    urls: (Array.isArray(photos[g.kind]) ? photos[g.kind] : [])
+      .filter((u): u is string => typeof u === "string" && /^https?:\/\//i.test(u)),
+  }));
+  const photoCounts = {
+    assessment: photoGroups[0].urls.length,
+    before: photoGroups[1].urls.length,
+    after: photoGroups[2].urls.length,
+  };
+  const totalPhotos = photoCounts.assessment + photoCounts.before + photoCounts.after;
+  const { data: items } = await supabase
+    .from("quote_items").select("qty, price, accepted").eq("job_id", job.id);
+  const quoteTotal = (items ?? []).filter((i) => i.accepted)
+    .reduce((s, i) => s + Number(i.qty) * Number(i.price), 0);
+  const finalTotal = job.final_total === null || job.final_total === undefined
+    ? quoteTotal : Number(job.final_total);
+  const link = `${APP_URL}#/c/${token}`;
   let emailStatus: "sent" | "failed" = "failed";
   let emailError = "";
   try {
@@ -167,20 +185,39 @@ async function completeJob(
         auth: { username: SENDER.email, password: appPassword },
       },
     });
-    const attempted = photoCounts.assessment + photoCounts.before + photoCounts.after;
-    const completeText = [
+    const lines: string[] = [
       `Hi ${client.name ?? "there"},`,
       ``,
-      `Your job "${job.title ?? "Heating / cooling service"}" is complete. The completion report is attached as a PDF.`,
+      `Your job "${job.title ?? "Heating / cooling service"}" is complete.`,
       `Completed: ${new Date(completedAt).toLocaleString("en-US")}`,
-      `Photo evidence in the report: ${embeddedPhotoCount} of ${attempted} photo(s) embedded` +
-        (failedPhotoCount ? ` (${failedPhotoCount} could not be embedded).` : "."),
+    ];
+    if (job.work_notes) lines.push(``, `Work performed:`, String(job.work_notes));
+    if (job.materials) lines.push(``, `Materials used:`, String(job.materials));
+    lines.push(``, `Final total: ${usd(finalTotal)}`);
+    if (totalPhotos) {
+      lines.push(``, `Photo evidence is included in this email (${photoCounts.assessment} assessment, ${photoCounts.before} before, ${photoCounts.after} after) and in your personal link:`);
+    } else {
+      lines.push(``, `You can review the work and your signed agreement any time from your personal link:`);
+    }
+    lines.push(
+      link,
       ``,
-      `You can also review the work, photos and your signed agreement any time from your personal link — keep that email.`,
       `Questions? Email us at ${COMPANY.email} and we will get back to you.`,
       ``,
       `${COMPANY.name} • ${COMPANY.cert} • ${COMPANY.city}`,
-    ].join("\n");
+    );
+    const completeText = lines.join("\n");
+    let completeHtml = htmlFromText(completeText, { url: link, label: "View your job details" });
+    if (totalPhotos) {
+      let sections = "";
+      for (const g of photoGroups) {
+        if (!g.urls.length) continue;
+        sections += `<br><b>${g.label} (${g.urls.length})</b><br>` + g.urls.map((u, ix) =>
+          `<img src="${escHtml(u)}" alt="${g.label} ${ix + 1}" style="width:100%;max-width:520px;border-radius:8px;margin:6px 0">`
+        ).join("");
+      }
+      completeHtml = completeHtml.replace(/<\/div>$/, sections + "</div>");
+    }
     await smtp.send({
       from: `${COMPANY.name} <${SENDER.email}>`,
       replyTo: COMPANY.email,
@@ -188,13 +225,7 @@ async function completeJob(
       bcc: [COMPANY.email], // company copy
       subject: `Your job completion report - ${COMPANY.name}`,
       content: asciiSafe(completeText),
-      html: htmlFromText(completeText),
-      attachments: [{
-        filename: "Angry-Panda-Job-Completion-Report.pdf",
-        contentType: "application/pdf",
-        encoding: "base64" as const,
-        content: pdfBase64,
-      }],
+      html: completeHtml,
     });
     await smtp.close();
     emailStatus = "sent";
@@ -206,7 +237,8 @@ async function completeJob(
   const priorLog = Array.isArray(job.completion_email_log) ? job.completion_email_log : [];
   const entry: Record<string, unknown> = {
     at: new Date().toISOString(), to: recipient, status: emailStatus,
-    photoCounts, embeddedPhotoCount, failedPhotoCount,
+    photoCounts, embeddedPhotoCount: totalPhotos, failedPhotoCount: 0,
+    note: "Evidence in email (no PDF attachment)",
   };
   if (emailError) entry.error = emailError;
   await supabase.from("jobs").update({
@@ -246,6 +278,12 @@ function htmlFromText(text: string, link?: { url: string; label: string }): stri
     body = body.split(u).join(btn);
   }
   body = body.replace(/\n/g, "<br>");
+  /* The mail library does not declare UTF-8 reliably on the HTML part
+     either (Apple Mail still garbled the footer's bullets), so encode
+     EVERY non-ASCII character as a numeric entity — entities render
+     identically under any declared charset. Tags/URLs are pure ASCII
+     and pass through untouched. */
+  body = body.replace(/[^\x00-\x7F]/g, (ch) => `&#${ch.codePointAt(0)};`);
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:560px">${body}</div>`;
 }
 /* Appointment display: the owner types the date/time into a

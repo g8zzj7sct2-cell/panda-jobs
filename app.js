@@ -528,14 +528,14 @@
         "</div>" +
         '<div class="btn-row"><button class="btn ghost" id="downloadCompletionPdf">Download completion PDF</button>' +
         (job.status === "done" && job.completionEmailStatus !== "sent"
-          ? '<button class="btn primary" id="resendCompletionBtn">Re-send completion PDF</button>' : "") +
+          ? '<button class="btn primary" id="resendCompletionBtn">Re-send evidence email</button>' : "") +
         "</div>" +
         ((job.status === "invoiced" || job.status === "done")
           ? '<div class="btn-row"><button class="btn primary block" id="archiveJobBtn">🏁 Complete &amp; move to History</button></div>' +
             '<p class="small muted">Finished for good? This takes the job off the board and files it in <b>History</b> (photos, installation date &amp; time, notes, invoice and signed contract), searchable by name, phone or email.</p>'
           : "");
     } else if (canComplete) {
-      html += '<p class="small muted">When the work and the photos above are ready, complete the job: the client gets ONE evidence PDF with the summary, materials, agreement, signature and all photos (' +
+      html += '<p class="small muted">When the work and the photos above are ready, complete the job: the client gets ONE evidence email with the summary, materials, final total and all photos (' +
         pc.assessment + " assessment · " + pc.before + " before · " + pc.after + " after).</p>" +
         '<button class="btn primary block" id="completeJobBtn">✅ Complete job</button>';
     } else {
@@ -546,7 +546,7 @@
         '<h3 id="completeConfirmTitle">Is this job complete?</h3>' +
         '<div id="completeConfirmBody"></div><div id="completeMsg"></div>' +
         '<div class="btn-row"><button class="btn light" id="completeCancel">Cancel</button>' +
-        '<button class="btn primary" id="completeConfirmBtn">Yes, complete &amp; send PDF</button></div></div>';
+        '<button class="btn primary" id="completeConfirmBtn">Yes, complete &amp; send email</button></div></div>';
     }
     html += "</div></div>";
     html += '<div class="card"><button class="btn danger" id="delJob">Delete this job</button></div>';
@@ -761,11 +761,12 @@
     });
     /* ---------- Complete job ----------
        Flow: open panel (no writes) -> Cancel leaves everything untouched
-       -> Confirm persists the CURRENT execution form first, generates
-       the evidence PDF, records it as a "completion-pdf" document, then
-       D.completeJob marks Done + emails it (demo simulates; live goes
-       through the Edge Function action "complete"). Email failure never
-       undoes the completion — see the catch path and the done state. */
+       -> Confirm persists the CURRENT execution form first, records the
+       completion as a "completion-pdf" document entry, then D.completeJob
+       marks Done + sends the evidence email (summary + photos IN the
+       email, no PDF attachment; demo simulates; live goes through the
+       Edge Function action "complete"). Email failure never undoes the
+       completion — see the catch path and the done state. */
     var completionMode = "complete";
     function completionCounts() {
       return {
@@ -797,10 +798,10 @@
       var mats = document.getElementById("jd_materials").value.trim();
       var okRecipient = validEmail(recipient);
       document.getElementById("completeConfirmTitle").textContent =
-        mode === "resend" ? "Re-send the completion PDF?" : "Is this job complete?";
+        mode === "resend" ? "Re-send the evidence email?" : "Is this job complete?";
       var bodyHtml = mode === "resend"
-        ? '<p>This will re-send the completion evidence PDF for this job. The job stays <b>Done</b> and keeps its original completion date.</p>'
-        : '<p>This will mark the job <b>Done</b>, save the work details as currently typed, generate ONE evidence PDF and email it to the client.</p>';
+        ? '<p>This will re-send the evidence email (summary + photos) for this job. The job stays <b>Done</b> and keeps its original completion date.</p>'
+        : '<p>This will mark the job <b>Done</b>, save the work details as currently typed, and email the client ONE evidence email with the summary and all the photos.</p>';
       bodyHtml += '<ul class="small">' +
         '<li>Assessment photos: <b>' + counts.assessment + '</b></li>' +
         '<li>BEFORE photos: <b>' + counts.before + '</b></li>' +
@@ -808,12 +809,12 @@
         '<li>Work summary: <b>' + (notes ? "included" : "not written") + '</b></li>' +
         '<li>Materials: <b>' + (mats ? "included" : "not written") + '</b></li>' +
         '<li>Recipient: <b>' + esc(recipient || "(no email)") + '</b></li></ul>';
-      if (!totalPhotos) bodyHtml += '<div class="notice warn"><b>No photos uploaded.</b> The PDF will still be sent, but it will contain no photo evidence. Add photos above first if the client should receive them.</div>';
+      if (!totalPhotos) bodyHtml += '<div class="notice warn"><b>No photos uploaded.</b> The email will still be sent, but it will contain no photo evidence. Add photos above first if the client should receive them.</div>';
       if (!okRecipient) bodyHtml += errBox("No valid recipient email — type one in the \u201cSend to email\u201d field above (or fix the client's email in the Clients tab). The job was NOT completed and nothing was sent.");
       document.getElementById("completeConfirmBody").innerHTML = bodyHtml;
       document.getElementById("completeMsg").innerHTML = "";
       var confirmBtn = document.getElementById("completeConfirmBtn");
-      confirmBtn.textContent = mode === "resend" ? "Yes, re-send PDF" : "Yes, complete & send PDF";
+      confirmBtn.textContent = mode === "resend" ? "Yes, re-send email" : "Yes, complete & send email";
       confirmBtn.disabled = !okRecipient;
       panel.style.display = "";
       panel.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -840,32 +841,28 @@
       completeConfirmBtn.textContent = "Working…";
       try {
         // 1) Persist the latest execution-form values + the recipient
-        //    override BEFORE anything is generated or marked.
+        //    override BEFORE anything is marked or sent.
         readExecutionInto(job);
         job.sendEmail = recipient;
         await D.saveJob(job);
-        // 2) Generate the evidence PDF from the just-saved values.
+        // 2) Record the completion. The evidence itself travels IN the
+        //    email now (summary + photos, no PDF attachment — Rigo's
+        //    call 2026-10-28 after giant PDFs kept killing the mailer).
         var completedAt = completionMode === "resend" && job.completedAt
           ? job.completedAt : new Date().toISOString();
-        var pdfJob = Object.assign({}, job, { status: "done", completedAt: completedAt });
-        var made = await window.PandaPDF.completionBase64(pdfJob, client, { completedAt: completedAt });
-        var stats = made.stats;
-        // 3) Record the PDF as a completion document.
+        var counts = completionCounts();
+        var totalPhotos = counts.assessment + counts.before + counts.after;
         await D.saveDocument(job.id, {
           version: job.version, kind: "completion-pdf",
-          pdfDataUrl: "data:application/pdf;base64," + made.base64,
-          recipient: recipient, photoCounts: stats.photoCounts,
-          embeddedPhotoCount: stats.embeddedPhotoCount,
-          failedPhotoCount: stats.failedPhotoCount, completedAt: completedAt
+          recipient: recipient, photoCounts: counts,
+          embeddedPhotoCount: totalPhotos,
+          failedPhotoCount: 0, completedAt: completedAt
         });
-        // 4) Mark Done + send (demo simulates; live = Edge Function).
+        // 3) Mark Done + send (demo simulates; live = Edge Function).
         var result;
         try {
           result = await D.completeJob(job.token, {
-            recipientEmail: recipient, pdfBase64: made.base64,
-            photoCounts: stats.photoCounts,
-            embeddedPhotoCount: stats.embeddedPhotoCount,
-            failedPhotoCount: stats.failedPhotoCount,
+            recipientEmail: recipient,
             completedAt: completedAt, resend: completionMode === "resend"
           });
         } catch (sendErr) {
@@ -878,9 +875,9 @@
             fresh.completionEmailLog = fresh.completionEmailLog || [];
             fresh.completionEmailLog.push({
               at: new Date().toISOString(), to: recipient, status: "failed",
-              note: "Job completed and PDF recorded, but the email request failed: " + (sendErr.message || sendErr),
-              photoCounts: stats.photoCounts, embeddedPhotoCount: stats.embeddedPhotoCount,
-              failedPhotoCount: stats.failedPhotoCount
+              note: "Job completed, but the evidence-email request failed: " + (sendErr.message || sendErr),
+              photoCounts: counts, embeddedPhotoCount: totalPhotos,
+              failedPhotoCount: 0
             });
             try { await D.saveJob(fresh); } catch (e3) { /* status stays failed in the UI message */ }
             result = { ok: true, emailStatus: "failed", completedAt: fresh.completedAt || completedAt };
@@ -891,14 +888,11 @@
         var m2 = document.getElementById("jobMsg");
         if (m2) {
           if (emailStatus === "failed") {
-            m2.innerHTML = '<div class="notice bad"><b>Job completed.</b> The evidence PDF was generated and recorded, but the completion email <b>failed</b> — the job stays Done and the PDF can be re-sent from the completion section below.</div>';
+            m2.innerHTML = '<div class="notice bad"><b>Job completed.</b> The evidence email <b>failed</b> — the job stays Done and the email can be re-sent from the completion section below.</div>';
           } else if (String(emailStatus).indexOf("demo") === 0) {
-            m2.innerHTML = '<div class="notice warn"><b>Job completed (demo).</b> The evidence PDF was generated and recorded; the completion email is <b>simulated</b> in demo mode — nothing was actually sent.</div>';
+            m2.innerHTML = '<div class="notice warn"><b>Job completed (demo).</b> The evidence email is <b>simulated</b> in demo mode — nothing was actually sent.</div>';
           } else {
-            m2.innerHTML = '<div class="notice ok"><b>Job completed.</b> The evidence PDF was emailed to ' + esc(recipient) + ".</div>";
-          }
-          if (stats.failedPhotoCount) {
-            m2.innerHTML += '<div class="notice warn">' + stats.failedPhotoCount + " photo(s) could not be embedded in the PDF (the rest of the evidence was included).</div>";
+            m2.innerHTML = '<div class="notice ok"><b>Job completed.</b> The evidence email (summary + photos) was sent to ' + esc(recipient) + ".</div>";
           }
           window.scrollTo(0, 0);
         }
@@ -906,7 +900,7 @@
         panelMsg.innerHTML = errBox("Could not complete the job: " + (e.message || e));
         completeConfirmBtn.disabled = false;
         if (completeCancel) completeCancel.disabled = false;
-        completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send PDF" : "Yes, complete & send PDF";
+        completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send email" : "Yes, complete & send email";
       }
     });
     var archiveBtn = document.getElementById("archiveJobBtn");
