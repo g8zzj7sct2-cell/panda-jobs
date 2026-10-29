@@ -212,6 +212,20 @@
       });
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: job.completionEmailStatus, completedAt: completedAt, job: job };
+    },
+    // Demo quote email: SIMULATES the server send (clearly labelled in
+    // the return) and records the send in the job history exactly like
+    // the live function does — only after a "successful" send.
+    sendQuoteEmail: async function (idOrToken, recipientEmail) {
+      var db = demoLoad(); var job = findJob(db, idOrToken); if (!job) throw new Error("Job not found");
+      var recipient = String(recipientEmail || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(recipient)) throw new Error("A valid recipient email is required");
+      job.sendLog = job.sendLog || [];
+      job.sendLog.push({ channel: "Email", at: nowIso(), to: recipient });
+      job.sendEmail = recipient;
+      if (job.status === "draft") job.status = "quote";
+      job.updatedAt = nowIso(); demoSave(db);
+      return { ok: true, emailStatus: "sent", demo: true, job: job };
     }
   };
 
@@ -364,6 +378,17 @@
           embeddedPhotoCount: data.embeddedPhotoCount, failedPhotoCount: data.failedPhotoCount,
           completedAt: data.completedAt || null, resend: !!data.resend
         }
+      });
+      if (res.error) throw res.error;
+      return res.data;
+    },
+    // Live quote email: the Edge Function verifies the owner's session
+    // (functions.invoke attaches it), sends the quote through the same
+    // Gmail path as the signed copy, and records the send server-side —
+    // the returned emailStatus is "sent" only when it really went out.
+    sendQuoteEmail: async function (token, recipientEmail) {
+      var res = await client().functions.invoke("sign-and-email", {
+        body: { action: "send-quote", token: token, recipientEmail: recipientEmail }
       });
       if (res.error) throw res.error;
       return res.data;

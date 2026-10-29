@@ -389,7 +389,6 @@
     var recipientEmail = job.sendEmail || storedEmail;
     var recipientValid = validEmail(recipientEmail);
     var smsHref = hasPhone ? "sms:+" + phoneIntl + "?&body=" + encodeURIComponent(sendMsg) : "";
-    var mailHref = recipientValid ? "mailto:" + recipientEmail + "?subject=" + encodeURIComponent("Your quote from Angry Panda Heating and Cooling") + "&body=" + encodeURIComponent(sendMsg) : "";
     var isDemoLink = DEMO || link.indexOf("localhost") >= 0 || link.indexOf("127.0.0.1") >= 0;
     var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
     html += '<main class="wrap wide"><div class="btn-row"><button class="btn light small" id="backBtn">← All jobs</button></div>';
@@ -435,8 +434,8 @@
         ? '<a class="btn primary" id="sendSms" href="' + esc(smsHref) + '">📱 Text message</a>'
         : '<a class="btn primary disabled" id="sendSms" aria-disabled="true">📱 Text message</a>') +
       (recipientValid
-        ? '<a class="btn ghost" id="sendEmail" href="' + esc(mailHref) + '">✉️ Email</a>'
-        : '<a class="btn ghost disabled" id="sendEmail" aria-disabled="true">✉️ Email</a>') +
+        ? '<button type="button" class="btn ghost" id="sendEmail">✉️ Email</button>'
+        : '<button type="button" class="btn ghost disabled" id="sendEmail" aria-disabled="true">✉️ Email</button>') +
       '<button class="btn light" id="copyLink">Copy link</button></div>';
     if (!hasPhone) html += '<p class="small muted" id="sendPhoneHint">No phone number on file for this client — add one in the Clients tab to enable text message.</p>';
     html += '<div id="sendLogList">' + sendLogHTML(job) + "</div>";
@@ -570,11 +569,13 @@
 
   function wireJobDetail(job, client, link, sendMsg) {
     var msg = document.getElementById("jobMsg");
-    /* Direct-send logging: records the channel on the job (fresh copy, so
-       unsaved form edits and signed versions are never clobbered) and, while
-       the job is still a draft, advances it to the "Quote sent" stage. The
-       DOM is updated in place — no re-render — so the send link's default
-       action (opening the messaging/mail app) is never interrupted. */
+    /* Direct-send logging (Text message only — the Email send is logged
+       server-side by the Edge Function): records the channel on the job
+       (fresh copy, so unsaved form edits and signed versions are never
+       clobbered) and, while the job is still a draft, advances it to the
+       "Quote sent" stage. The DOM is updated in place — no re-render —
+       so the send link's default action (opening the messaging app) is
+       never interrupted. */
     async function logSend(channel, recipient) {
       try {
         var fresh = (await D.getJob(job.id)) || job;
@@ -625,25 +626,26 @@
     document.getElementById("copySms").addEventListener("click", function () { copyText(sendMsg, this); });
     var smsEl = document.getElementById("sendSms");
     if (smsEl && !smsEl.classList.contains("disabled")) smsEl.addEventListener("click", function () { logSend("Text message"); });
-    /* Editable recipient email: the Email button always uses the address
-       currently typed in #sendEmailTo — prefilled with job.sendEmail (last
-       used on this job) or the client's stored email, and overwritable per
-       send (spouse, office, property manager…). Typing a valid address
-       enables the button live; an invalid one shows an error and the click
-       guard below makes sure nothing is sent or logged. */
+    /* Editable recipient email: the Email button sends the quote FOR
+       REAL through the sign-and-email Edge Function (same Gmail path as
+       the signed copy), to the address currently typed in #sendEmailTo —
+       prefilled with job.sendEmail (last used on this job) or the
+       client's stored email, and overwritable per send (spouse, office,
+       property manager…). The server records the send in the history
+       ONLY when the email actually went out; a failure shows its error
+       here and logs nothing. (Before 2026-10-28 this button was a
+       mailto: link that merely opened the owner's mail app — Rigo
+       clicked it, the history claimed "Sent", and nothing ever left.) */
     var emailField = document.getElementById("sendEmailTo");
     var emailBtn = document.getElementById("sendEmail");
     var emailErr = document.getElementById("sendEmailError");
     var saveEmailLink = document.getElementById("saveClientEmail");
-    function mailHrefFor(addr) {
-      return "mailto:" + addr + "?subject=" + encodeURIComponent("Your quote from Angry Panda Heating and Cooling") + "&body=" + encodeURIComponent(sendMsg);
-    }
     function refreshEmailUI(showErr) {
       if (!emailField || !emailBtn) return;
       var addr = emailField.value.trim();
       var ok = validEmail(addr);
-      if (ok) { emailBtn.setAttribute("href", mailHrefFor(addr)); emailBtn.classList.remove("disabled"); emailBtn.removeAttribute("aria-disabled"); }
-      else { emailBtn.removeAttribute("href"); emailBtn.classList.add("disabled"); emailBtn.setAttribute("aria-disabled", "true"); }
+      if (ok) { emailBtn.classList.remove("disabled"); emailBtn.removeAttribute("aria-disabled"); }
+      else { emailBtn.classList.add("disabled"); emailBtn.setAttribute("aria-disabled", "true"); }
       if (emailErr) emailErr.innerHTML = (showErr && addr && !ok) ? errBox("That doesn't look like a valid email address — check it before sending. Nothing was sent.") : (ok || !addr ? "" : emailErr.innerHTML);
       if (saveEmailLink) saveEmailLink.style.display = (client && ok && addr !== (client.email || "")) ? "" : "none";
     }
@@ -659,16 +661,30 @@
         } catch (e) { /* non-fatal: the send click persists it too */ }
       });
     }
-    if (emailBtn) emailBtn.addEventListener("click", function (e) {
+    if (emailBtn) emailBtn.addEventListener("click", async function () {
       var addr = emailField ? emailField.value.trim() : "";
       if (!validEmail(addr)) {
-        e.preventDefault();
         if (emailErr) emailErr.innerHTML = errBox("Type a valid email address in “Send to email” first (e.g. name@example.com) — nothing was sent.");
         return;
       }
       if (emailErr) emailErr.innerHTML = "";
-      emailBtn.setAttribute("href", mailHrefFor(addr));
-      logSend("Email", addr);
+      var originalLabel = emailBtn.textContent;
+      emailBtn.disabled = true; emailBtn.classList.add("disabled"); emailBtn.textContent = "Sending…";
+      try {
+        var res = await D.sendQuoteEmail(job.token, addr);
+        if (res && res.emailStatus === "sent") {
+          var fresh = (await D.getJob(job.id)) || job;
+          job.sendLog = fresh.sendLog; job.status = fresh.status; job.sendEmail = fresh.sendEmail;
+          var sel = document.getElementById("jd_status"); if (sel) sel.value = job.status;
+          var box = document.getElementById("sendLogList"); if (box) box.innerHTML = sendLogHTML(job);
+          if (emailErr) emailErr.innerHTML = '<div class="notice ok">Quote emailed to ' + esc(addr) + " ✓</div>";
+        } else {
+          if (emailErr) emailErr.innerHTML = errBox("The email could not be sent" + (res && res.emailError ? ": " + res.emailError : ".") + " Nothing was logged — check the address and try again.");
+        }
+      } catch (e2) {
+        if (emailErr) emailErr.innerHTML = errBox("The email could not be sent: " + (e2.message || e2) + " Nothing was logged.");
+      }
+      emailBtn.disabled = false; emailBtn.classList.remove("disabled"); emailBtn.textContent = originalLabel;
     });
     if (saveEmailLink) saveEmailLink.addEventListener("click", async function (e) {
       e.preventDefault();
