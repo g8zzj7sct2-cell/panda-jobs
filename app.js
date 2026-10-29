@@ -1194,10 +1194,14 @@
           await D.signJob(job.token, { name: name, signatureDataUrl: sigUrl, acceptedOptionals: acceptedIdx });
           job = await D.getJobByToken(job.token);
         }
-        /* Signed PDF -> stored document; demo simulates the automatic email. */
+        /* Signed PDF -> stored document; demo simulates the automatic email.
+           In live mode the Edge Function already recorded the signed
+           document server-side (service role), and this anonymous portal
+           client has no INSERT policy on documents — so a failure here must
+           never break the signed confirmation. */
         var sig = signedSig(job);
         var pdfUrl = await window.PandaPDF.dataUrl(job, client, { version: sig ? sig.version : job.version });
-        await D.saveDocument(job.id, { version: sig ? sig.version : job.version, pdfDataUrl: pdfUrl });
+        try { await D.saveDocument(job.id, { version: sig ? sig.version : job.version, pdfDataUrl: pdfUrl }); } catch (e) { /* server copy already saved */ }
         job = (await D.getJobByToken(job.token)) || job;
         renderClient(job.token);
         window.scrollTo(0, 0);
