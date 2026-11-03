@@ -1,0 +1,80 @@
+{
+  "results": [
+    {
+      "test": "Exactly three send controls exist (Text, Email, Copy link)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "NO WhatsApp anywhere in the job detail (no button, no wa.me link, no label)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "SMS href well-formed (sms:+13125550148?&body=...)",
+      "pass": true,
+      "detail": "sms:+13125550148?&body=Hi%20Send%2C%20this%20is%20Angry%20Panda%20Heating%20and%20Cooling.%20Here%20is%20your%20quote%20"
+    },
+    {
+      "test": "Email is a real send button now (BUTTON element, NO mailto href, enabled)",
+      "pass": true,
+      "detail": "BUTTON href=None"
+    },
+    {
+      "test": "Demo-link warning is shown",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Job starts at the Draft stage",
+      "pass": true,
+      "detail": "Draft"
+    },
+    {
+      "test": "Copy link puts the exact client link on the clipboard",
+      "pass": true,
+      "detail": "http://127.0.0.1:8765/#/c/4b99c52a95b428d8f9c8bad7"
+    },
+    {
+      "test": "Copy button shows 'Copied' feedback",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Job detail shows 'Sent via Text message \u00b7 <date/time>' and status 'Quote sent'",
+      "pass": true,
+      "detail": "Quote sent"
+    },
+    {
+      "test": "Send persisted on the job (sendLog + status=quote)",
+      "pass": true,
+      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-03T02:57:29.396Z\"}]}"
+    },
+    {
+      "test": "Email click shows the sent confirmation and logs 'Email' + recipient; sendEmail persisted",
+      "pass": true,
+      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-03T02:57:29.396Z\"}, {\"channel\": \"Email\", \"at\": \"2026-11-03T02:57:29.959Z\", \"to\": \"sendtest@example.com\"}], \"sendEmail\": \"sendtest@example.com\"}"
+    },
+    {
+      "test": "Send log still shown after reload",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No phone -> SMS disabled with hint, Email still enabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No email -> Email disabled with hint, SMS still enabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No JS console/page errors during the spot check",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

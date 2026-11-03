@@ -11,11 +11,13 @@
  *   signJob(jobIdOrToken, {name, signatureDataUrl, acceptedOptionals})
  *   addPhoto(jobId, kind, dataUrl)   removePhoto(jobId, kind, idx)
  *   saveDocument(jobId, data)  -> {ok, emailStatus, error?}
+ *   deleteJobPhotos(jobId)     -> owner-confirmed photo purge (2026-11-02)
  * Job shape (see plan):
  *   {id, clientId, token, status, title, items:[{desc,qty,price,optional,accepted}],
  *    deposit, terms, version, signedVersion, signatures:[{version,name,signatureDataUrl,signedAt}],
  *    scheduledAt, workNotes, materials, finalTotal, paymentStatus,
  *    photos:{assessment:[],before:[],after:[]}, copyEmailStatus, copyEmailLog:[],
+ *    amountPaid:0, startedAt:"", finishedAt:"", photosDeletedAt:"",
  *    completedAt:"", archivedAt:"", completionEmailStatus:"",
  *    completionEmailLog:[{at,to,status,note?,photoCounts,embeddedPhotoCount,failedPhotoCount}],
  *    documents:[{version,kind,pdfDataUrl?,fileUrl?,createdAt}],
@@ -67,6 +69,7 @@
       terms: defaultTerms(), version: 1, signedVersion: 0, signatures: [],
       scheduledAt: "", workNotes: "", materials: "", finalTotal: null,
       paymentStatus: "pending",
+      amountPaid: 0, startedAt: "", finishedAt: "", photosDeletedAt: "",
       photos: { assessment: [], before: [], after: [] },
       copyEmailStatus: "", copyEmailLog: [],
       completedAt: "", archivedAt: "", completionEmailStatus: "", completionEmailLog: [], documents: [],
@@ -189,8 +192,9 @@
       return { ok: true, emailStatus: "demo — not sent" };
     },
     // Demo completion: marks the job Done and SIMULATES the evidence
-    // email (clearly labelled) — summary + photos in the email itself,
-    // no PDF attachment, mirroring the live function.
+    // email (clearly labelled). Since the 2026-11-02 ronda the email
+    // carries the browser-generated evidence PDF + the photos as
+    // attachments; the payload's photo stats are logged as provided.
     completeJob: async function (idOrToken, data) {
       var db = demoLoad(); var job = findJob(db, idOrToken); if (!job) throw new Error("Job not found");
       data = data || {};
@@ -204,16 +208,17 @@
       job.status = "done";
       job.completionEmailStatus = "demo — not sent";
       job.completionEmailLog = job.completionEmailLog || [];
-      var pc = {
+      var pc = data.photoCounts || {
         assessment: (job.photos.assessment || []).length,
         before: (job.photos.before || []).length,
         after: (job.photos.after || []).length
       };
       job.completionEmailLog.push({
         at: nowIso(), to: recipient, status: "demo — not sent",
-        note: "Demo mode: evidence email simulated — no email actually leaves the browser",
-        photoCounts: pc, embeddedPhotoCount: pc.assessment + pc.before + pc.after,
-        failedPhotoCount: 0
+        note: "Demo mode: evidence email simulated — PDF + photo attachments do not actually leave the browser",
+        photoCounts: pc,
+        embeddedPhotoCount: data.embeddedPhotoCount != null ? data.embeddedPhotoCount : (pc.assessment + pc.before + pc.after),
+        failedPhotoCount: data.failedPhotoCount || 0
       });
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: job.completionEmailStatus, completedAt: completedAt, job: job };
@@ -242,8 +247,20 @@
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(to)) throw new Error("No client email on file");
       job.sendLog = job.sendLog || [];
       job.sendLog.push({ channel: "Email", at: nowIso(), to: to, kind: "schedule" });
+      // Ronda 2026-11-02: once the appointment email is really sent, a
+      // signed job advances to "scheduled" automatically (mirrors the
+      // live Edge Function).
+      if (job.status === "signed") job.status = "scheduled";
       job.updatedAt = nowIso(); demoSave(db);
       return { ok: true, emailStatus: "sent", demo: true, job: job };
+    },
+    // Demo photo purge: Rigo confirmed he has the evidence (PDF + email
+    // attachments), so the stored photos go away and the purge is dated.
+    deleteJobPhotos: async function (jobId) {
+      var db = demoLoad(); var job = findJob(db, jobId); if (!job) throw new Error("Job not found");
+      job.photos = { assessment: [], before: [], after: [] };
+      job.photosDeletedAt = nowIso();
+      job.updatedAt = nowIso(); demoSave(db); return job;
     }
   };
 
@@ -264,7 +281,13 @@
       signatures: (signatures || []).map(function (s) { return { version: s.version, name: s.signer_name, signatureDataUrl: s.signature_image_url, signedAt: s.signed_at }; }),
       scheduledAt: r.scheduled_at || "", workNotes: r.work_notes || "", materials: r.materials || "",
       finalTotal: r.final_total === null || r.final_total === undefined ? null : Number(r.final_total),
-      paymentStatus: r.payment_status, photos: r.photos || { assessment: [], before: [], after: [] },
+      paymentStatus: r.payment_status,
+      // Ronda 2026-11-02 fields — defaulted so the app keeps working
+      // before the migration that adds these columns is applied.
+      amountPaid: Number(r.amount_paid || 0),
+      startedAt: r.started_at || "", finishedAt: r.finished_at || "",
+      photosDeletedAt: r.photos_deleted_at || "",
+      photos: r.photos || { assessment: [], before: [], after: [] },
       copyEmailStatus: r.copy_email_status || "", copyEmailLog: [],
       completedAt: r.completed_at || "", archivedAt: r.archived_at || "", completionEmailStatus: r.completion_email_status || "",
       completionEmailLog: r.completion_email_log || [], documents: [],
@@ -324,10 +347,24 @@
         photos: j.photos, copy_email_status: j.copyEmailStatus,
         completed_at: j.completedAt || null, archived_at: j.archivedAt || null, completion_email_status: j.completionEmailStatus || "",
         completion_email_log: j.completionEmailLog || [],
-        send_log: j.sendLog || [], send_email: j.sendEmail || "" };
-      var res;
-      if (j.id && String(j.id).indexOf("job_") !== 0) res = await client().from("jobs").update(row).eq("id", j.id).select().single();
-      else res = await client().from("jobs").insert(row).select().single();
+        send_log: j.sendLog || [], send_email: j.sendEmail || "",
+        amount_paid: Number(j.amountPaid || 0),
+        started_at: j.startedAt || null, finished_at: j.finishedAt || null,
+        photos_deleted_at: j.photosDeletedAt || null };
+      // Graceful degradation (ronda 2026-11-02): if the migration that
+      // adds the new columns has not been applied yet, PostgREST rejects
+      // the write naming the unknown column — strip the new fields and
+      // retry once, so the live app never breaks over a pending SQL step.
+      var NEW_COLS = ["amount_paid", "started_at", "finished_at", "photos_deleted_at"];
+      async function attempt(r) {
+        if (j.id && String(j.id).indexOf("job_") !== 0) return client().from("jobs").update(r).eq("id", j.id).select().single();
+        return client().from("jobs").insert(r).select().single();
+      }
+      var res = await attempt(row);
+      if (res.error && NEW_COLS.some(function (c) { return String(res.error.message || "").indexOf(c) >= 0; })) {
+        NEW_COLS.forEach(function (c) { delete row[c]; });
+        res = await attempt(row);
+      }
       if (res.error) throw res.error;
       j.id = res.data.id;
       await client().from("quote_items").delete().eq("job_id", j.id);
@@ -382,19 +419,24 @@
       if (ins.error) throw ins.error;
       return { ok: true, emailStatus: data.emailStatus || "" };
     },
-    // Live completion: the Edge Function verifies the token + signed
-    // state, marks the job Done server-side (new completed_at, unless
-    // this is a re-send) and emails the EVIDENCE IN THE EMAIL ITSELF —
-    // summary, totals and the job photos, no PDF attachment (the giant
-    // base64 PDF kept killing the mail worker; Rigo's call 2026-10-28).
-    // An email failure comes back as {ok:true, emailStatus:"failed"} —
-    // the completion stands either way.
+    // Live completion (ronda 2026-11-02): the panel generates the
+    // evidence PDF in the browser (pdf.js) and converts the photos to
+    // JPEG attachments; the Edge Function only attaches what it
+    // receives (generating PDFs server-side died on the CPU limit) and
+    // moves the job to Done ONLY after the email actually went out.
+    // An email failure comes back as {ok:true, emailStatus:"failed"}
+    // and the job stays In progress so the send can be retried.
     completeJob: async function (token, data) {
       data = data || {};
       var res = await client().functions.invoke("sign-and-email", {
         body: {
           action: "complete", token: token, recipientEmail: data.recipientEmail || "",
-          completedAt: data.completedAt || null, resend: !!data.resend
+          completedAt: data.completedAt || null, resend: !!data.resend,
+          pdfBase64: data.pdfBase64 || null,
+          photoAttachments: data.photoAttachments || [],
+          photoCounts: data.photoCounts || null,
+          embeddedPhotoCount: data.embeddedPhotoCount,
+          failedPhotoCount: data.failedPhotoCount
         }
       });
       if (res.error) throw res.error;
@@ -420,6 +462,34 @@
       });
       if (res.error) throw res.error;
       return res.data;
+    },
+    // Live photo purge (ronda 2026-11-02): Rigo confirmed in the app
+    // that he already has the evidence (the emailed PDF + photo
+    // attachments). Deletes the photos-table rows AND their Storage
+    // objects, empties the jobs.photos jsonb and stamps
+    // photos_deleted_at. Before that confirmation, nothing is deleted.
+    deleteJobPhotos: async function (jobId) {
+      var res = await client().from("photos").select("image_url").eq("job_id", jobId);
+      if (res.error) throw res.error;
+      var marker = "/job-photos/";
+      var paths = (res.data || []).map(function (r) {
+        var ix = String(r.image_url || "").indexOf(marker);
+        return ix >= 0 ? decodeURIComponent(String(r.image_url).slice(ix + marker.length)) : null;
+      }).filter(Boolean);
+      if (paths.length) {
+        var rm = await client().storage.from("job-photos").remove(paths);
+        if (rm.error) throw rm.error;
+      }
+      var del = await client().from("photos").delete().eq("job_id", jobId);
+      if (del.error) throw del.error;
+      var upd = { photos: { assessment: [], before: [], after: [] }, photos_deleted_at: new Date().toISOString() };
+      var ures = await client().from("jobs").update(upd).eq("id", jobId);
+      if (ures.error && String(ures.error.message || "").indexOf("photos_deleted_at") >= 0) {
+        delete upd.photos_deleted_at; // column pending migration — rows/objects are already gone
+        ures = await client().from("jobs").update(upd).eq("id", jobId);
+      }
+      if (ures.error) throw ures.error;
+      return Live.getJob(jobId);
     }
   };
 

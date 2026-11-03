@@ -1,0 +1,70 @@
+{
+  "results": [
+    {
+      "test": "Live: owner panel renders from seeded (invite-style) session",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Live: LIVE badge shown",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Live: Account toggle in header, card hidden by default",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Live: Account card appears after toggle, with signed-in email",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Validation: mismatched passwords blocked, no update sent",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Validation: <8 chars blocked, no update sent",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "updateUser called with the new password",
+      "pass": true,
+      "detail": "{\"password\":\"NewPass123\",\"code_challenge\":null,\"code_challenge_method\":null}"
+    },
+    {
+      "test": "Success message shown verbatim",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Password fields cleared after save",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Toggle hides and re-shows the card",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Supabase error shown verbatim",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Demo: owner panel renders, Account card AND toggle ABSENT",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No JS console/page errors",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

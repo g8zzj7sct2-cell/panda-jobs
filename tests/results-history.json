@@ -1,0 +1,67 @@
+[
+ {
+  "test": "Archive button appears on an invoiced job",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Archived job leaves the Jobs board",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "History lists the archived job",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Search by phone digits finds it",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Search by email finds it",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Search by name finds it",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "No-match search hides it and says so",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Record shows installation date & time",
+  "pass": true,
+  "detail": "Angry Panda\nHeating and Cooling \u2014 Chicago, IL\nLog out\nDEMO MODE\n\u2190 Job history\nHistory check \u2014 furnace install\n\nClient: History Client \u2022 (312) 555-0173 \u2022 history.client@example.com\n742 W History Ave, Chicago, IL\n\n\ud83d\udcc5 Installation date & time: Nov 5, 2026, 10:30 AM\n\u2705 Work completed: \u2014\n\ud83d\uddc2\ufe0f Moved to Histor"
+ },
+ {
+  "test": "Record shows the notes",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Record shows the invoice",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Record shows the contract block",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Record shows client contact for lookups",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "test": "Restored job is back on the board",
+  "pass": true,
+  "detail": ""
+ }
+]

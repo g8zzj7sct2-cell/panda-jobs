@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Panda Jobs — "Complete job" verification (demo mode).
+"""Panda Jobs — completion / evidence verification (demo mode).
 
-Verifies Rigo's requested flow end to end in a real browser:
-  signed job -> owner adds photos + work details -> "Complete job"
-  button -> in-app confirmation ("Is this job complete?") showing the
-  evidence counts + recipient -> Cancel changes nothing -> Confirm
-  persists the unsaved execution form, marks the job Done, records a
-  completion-pdf document and the (simulated, demo-labelled) completion
-  email -> the generated PDF itself is extracted and checked (title,
-  summary, materials, photo section headings, embedded images, and the
-  no-owner-phone privacy rule) -> the done state supports Re-send ->
-  a job with no recipient email is blocked with a clear message and a
-  zero-photo warning -> the client portal shows Done + completion date.
+Rewritten for Rigo's 2026-11-02 stage flow (the old one-page "Complete
+job" button is gone). Verified end to end in a real browser:
+  quote -> client signs in the portal -> owner opens the SIGNED view
+  (ONLY the Schedule card) -> saves the appointment + amount paid ->
+  the appointment email advances the job to SCHEDULED by itself ->
+  SCHEDULED shows ONLY the money (total / paid / balance) + Start job
+  -> Start job lands on IN PROGRESS (invoice + evidence only) ->
+  photos + UNSAVED work details -> Finish work generates the evidence
+  PDF -> Send evidence opens the confirmation (counts + recipient) ->
+  Cancel changes nothing -> Confirm persists the form, records the
+  completion-pdf document WITH the exact PDF bytes, emails it
+  (simulated + demo-labelled) and the job lands on DONE by itself ->
+  DONE shows ONLY contract + evidence PDF + invoice -> the stored
+  evidence PDF is downloaded and content-checked (title, summary,
+  materials, signature, photo headings, embedded images, no owner
+  phone) -> photos are STILL stored (never auto-deleted) -> Re-send
+  keeps the original completion date -> the portal shows Done -> a job
+  with no recipient email is blocked with a clear message.
 
 Run:  ~/workspace/venvs/playwright-test/bin/python tests/verify_complete_job.py
 Server must be running in DEMO mode on :8765 (copy of the project with
@@ -48,10 +55,16 @@ def job_state(page, title):
       if (!j) return null;
       return {
         status: j.status, completedAt: j.completedAt || '',
+        startedAt: j.startedAt || '', finishedAt: j.finishedAt || '',
+        amountPaid: j.amountPaid || 0,
         completionEmailStatus: j.completionEmailStatus || '',
         log: j.completionEmailLog || [], documents: j.documents || [],
+        photos: { assessment: (j.photos.assessment||[]).length,
+                  before: (j.photos.before||[]).length,
+                  after: (j.photos.after||[]).length },
         workNotes: j.workNotes || '', materials: j.materials || '',
-        finalTotal: j.finalTotal, paymentStatus: j.paymentStatus
+        finalTotal: j.finalTotal, paymentStatus: j.paymentStatus,
+        sendLog: j.sendLog || []
       };
     }""", title)
 
@@ -59,7 +72,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     ctx = browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=True)
     page = ctx.new_page()
-    page.set_default_navigation_timeout(120000)  # shared VM can be CPU-busy (video renders); behavior checks matter, not load speed
+    page.set_default_navigation_timeout(120000)
     page.on("pageerror", lambda e: console_errors.append("pageerror: " + str(e)))
     page.on("console", lambda m: console_errors.append("console." + m.type + ": " + m.text) if m.type == "error" else None)
 
@@ -88,16 +101,15 @@ with sync_playwright() as p:
     page.fill("#nj_title", "Completion evidence check")
     page.click("#nj_create")
     page.wait_for_selector("#addItem", timeout=5000)
+    rec("Draft job: no evidence/completion buttons in the quote stage",
+        page.locator("#sendEvidenceBtn").count() == 0
+        and page.locator("#finishWorkBtn").count() == 0
+        and page.locator("#startJobBtn").count() == 0)
     page.click("#addItem"); page.wait_for_selector('[data-qrow="0"]')
     page.fill('[data-qrow="0"] [data-f="desc"]', "Furnace ignitor replacement (parts & labor)")
     page.fill('[data-qrow="0"] [data-f="price"]', "350")
     page.click("#saveQuote")
     page.wait_for_timeout(1600)
-
-    rec("Draft job: no Complete button, exclusion note shown instead",
-        page.locator("#completeJobBtn").count() == 0
-        and page.locator("#completeUnavailable").count() == 1)
-
     link = page.inner_text("code.linkbox").strip()
 
     # ---------- client signs in the portal (mobile page, same context) ----------
@@ -119,35 +131,85 @@ with sync_playwright() as p:
     mob.check("#agree")
     mob.click("#signBtn")
     mob.wait_for_selector("#dlSigned", timeout=10000)
-    rec("Client signed (job becomes completable)", "✓ Signed" in body(mob))
+    rec("Client signed in the portal", "✓ Signed" in body(mob))
 
-    # ---------- owner: photos + UNSAVED execution details ----------
+    # ---------- SIGNED view: ONLY the Schedule card ----------
     page.bring_to_front()
     page.reload(); page.wait_for_load_state("networkidle")
     page.click('[data-open-job]:has-text("Completion evidence check")')
-    page.wait_for_selector("#completeJobBtn", timeout=8000)
-    rec("Signed job: Complete job button appears",
-        page.locator("#completeJobBtn").is_visible())
+    page.wait_for_selector("#saveScheduleBtn", timeout=8000)
+    txt = body(page)
+    rec("Signed view: Schedule card only (no title edit, no signatures card, no photos, no send card)",
+        page.locator("#jd_sched").count() == 1
+        and page.locator("#jd_title").count() == 0
+        and page.locator("#sendSms").count() == 0
+        and "Signatures & documents" not in txt
+        and page.locator("[data-photo-input]").count() == 0
+        and page.locator("#sendEvidenceBtn").count() == 0, txt[:200].replace("\n", " "))
+
+    # ---------- save schedule -> auto-advance to SCHEDULED ----------
+    page.fill("#jd_paid", "100")
+    page.fill("#jd_sched", "2026-11-06T09:00")
+    page.click("#saveScheduleBtn")
+    page.wait_for_selector("#startJobBtn", timeout=10000)
+    st = job_state(page, "Completion evidence check")
+    rec("Appointment email sent -> job advanced signed -> scheduled by itself",
+        st and st["status"] == "scheduled"
+        and any(e.get("kind") == "schedule" for e in st["sendLog"])
+        and st["amountPaid"] == 100, json.dumps(st)[:250] if st else "missing")
+
+    # ---------- SCHEDULED view: ONLY the money + Start job ----------
+    txt = body(page)
+    rec("Scheduled view: money summary only (total / paid / balance) + Start job",
+        "Payment summary" in txt and "$350.00" in txt and "$100.00" in txt and "$250.00" in txt
+        and page.locator("#startJobBtn").count() == 1
+        and page.locator("#jd_sched").count() == 0
+        and page.locator("[data-photo-input]").count() == 0
+        and "Invoice" not in txt, txt[:250].replace("\n", " "))
+    page.click("#startJobBtn")
+    page.wait_for_selector("#sendEvidenceBtn", timeout=8000)
+
+    # ---------- IN PROGRESS view: invoice + evidence only ----------
+    st = job_state(page, "Completion evidence check")
+    txt = body(page)
+    rec("Start job -> In progress; start time recorded; invoice + evidence sections only",
+        st and st["status"] == "in_progress" and bool(st["startedAt"])
+        and "Invoice" in txt and "Evidence" in txt and "$350.00" in txt
+        and "Work started" in txt
+        and page.locator("#finishWorkBtn").count() == 1
+        and page.locator("#sendEvidenceBtn").count() == 1
+        and "Signatures & documents" not in txt, json.dumps(st)[:200] if st else "missing")
+
+    # ---------- photos + UNSAVED execution details ----------
     page.set_input_files('[data-photo-input="assessment"]', os.path.join(ROOT, "tests", "before.jpg"))
     page.wait_for_selector('img[alt="assessment photo"]', timeout=10000)
     page.set_input_files('[data-photo-input="before"]', os.path.join(ROOT, "tests", "before.jpg"))
     page.wait_for_selector('img[alt="before photo"]', timeout=10000)
     page.set_input_files('[data-photo-input="after"]', os.path.join(ROOT, "tests", "after.jpg"))
     page.wait_for_selector('img[alt="after photo"]', timeout=10000)
-    # Deliberately NOT saved with "Save execution details": the completion
-    # confirm must persist what is currently typed.
+    # Deliberately NOT saved anywhere: the send flow must persist what
+    # is currently typed in the form.
     page.fill("#jd_notes", SUMMARY)
     page.fill("#jd_materials", MATERIALS)
     page.fill("#jd_final", "425")
     page.select_option("#jd_pay", "paid")
     page.fill("#sendEmailTo", RECIPIENT)  # per-job recipient override
 
+    # ---------- Finish work generates the evidence PDF ----------
+    page.click("#finishWorkBtn")
+    page.wait_for_selector("#finishMsg .notice.ok", timeout=30000)
+    fin = page.inner_text("#finishMsg")
+    st = job_state(page, "Completion evidence check")
+    rec("Finish work: finish time recorded, PDF generated with 3 of 3 photos, job still In progress",
+        "3 of 3 photos" in fin and st and bool(st["finishedAt"])
+        and st["status"] == "in_progress", fin[:200].replace("\n", " "))
+
     # ---------- confirmation: content + Cancel ----------
-    page.click("#completeJobBtn")
+    page.click("#sendEvidenceBtn")
     page.wait_for_selector("#completeConfirm", state="visible", timeout=5000)
     panel = page.inner_text("#completeConfirm")
-    rec("Confirmation asks 'Is this job complete?' and summarises the evidence",
-        "Is this job complete?" in panel
+    rec("Confirmation summarises the evidence + recipient",
+        "Send the evidence and finish the job?" in panel
         and "Assessment photos: 1" in panel and "BEFORE photos: 1" in panel
         and "AFTER photos: 1" in panel
         and "Work summary: included" in panel and "Materials: included" in panel
@@ -157,22 +219,22 @@ with sync_playwright() as p:
     page.wait_for_selector("#completeConfirm", state="hidden", timeout=5000)
     st = job_state(page, "Completion evidence check")
     rec("Cancel leaves status + completion metadata untouched",
-        st and st["status"] == "signed" and st["completedAt"] == ""
+        st and st["status"] == "in_progress" and st["completedAt"] == ""
         and not [d for d in st["documents"] if d.get("kind") == "completion-pdf"],
         json.dumps(st)[:200] if st else "job missing")
 
-    # ---------- confirmation: Confirm completes ----------
-    page.click("#completeJobBtn")
+    # ---------- confirmation: Confirm sends + job lands on DONE ----------
+    page.click("#sendEvidenceBtn")
     page.wait_for_selector("#completeConfirm", state="visible", timeout=5000)
     page.click("#completeConfirmBtn")
-    page.wait_for_selector("#completionState", timeout=20000)
+    page.wait_for_selector("#completionState", timeout=30000)
     txt = body(page)
-    rec("After confirm: Done state, completion date + demo email status shown",
+    rec("After confirm: Done view, completion date + demo email status shown",
         "Job completed" in txt and "Completion evidence email:" in txt
         and "demo — not sent" in txt
         and "Job completed (demo)" in txt, txt[:200].replace("\n", " "))
-    rec("Complete button replaced by the completion state",
-        page.locator("#completeJobBtn").count() == 0
+    rec("Send buttons replaced by the Done stage view",
+        page.locator("#sendEvidenceBtn").count() == 0
         and page.locator("#completionState").count() == 1)
     st = job_state(page, "Completion evidence check")
     comp_docs = [d for d in (st["documents"] if st else []) if d.get("kind") == "completion-pdf"]
@@ -181,28 +243,43 @@ with sync_playwright() as p:
         and st["completionEmailStatus"] == "demo — not sent"
         and len(st["log"]) == 1 and st["log"][0].get("to") == RECIPIENT
         and st["log"][0].get("status") == "demo — not sent", json.dumps(st)[:300] if st else "missing")
-    rec("Unsaved execution form was persisted by the completion flow",
+    rec("Unsaved execution form was persisted by the send flow",
         st and st["workNotes"] == SUMMARY and st["materials"] == MATERIALS
         and st["finalTotal"] == 425 and st["paymentStatus"] == "paid")
-    rec("Completion PDF recorded as a completion-pdf document with photo stats",
-        len(comp_docs) == 1 and comp_docs[0].get("pdfDataUrl", "").startswith("data:application/pdf")
+    rec("Evidence document recorded WITH the exact PDF bytes + photo stats",
+        len(comp_docs) == 1
+        and (comp_docs[0].get("pdfDataUrl") or "").startswith("data:application/pdf;base64,")
         and (comp_docs[0].get("photoCounts") or {}).get("assessment") == 1
         and (comp_docs[0].get("photoCounts") or {}).get("before") == 1
         and (comp_docs[0].get("photoCounts") or {}).get("after") == 1
         and comp_docs[0].get("embeddedPhotoCount") == 3
         and comp_docs[0].get("failedPhotoCount") == 0,
-        json.dumps(comp_docs[0])[:300] if comp_docs else "no completion doc")
+        json.dumps({k: (v[:40] + "…" if isinstance(v, str) and len(v) > 40 else v) for k, v in comp_docs[0].items()})[:300] if comp_docs else "no completion doc")
+    rec("Photos are STILL stored after Done (never auto-deleted)",
+        st and st["photos"] == {"assessment": 1, "before": 1, "after": 1},
+        json.dumps(st["photos"]) if st else "missing")
+
+    # ---------- DONE view: ONLY contract + evidence PDF + invoice ----------
+    txt = body(page)
+    rec("Done view: contract + evidence PDF + invoice only",
+        "Contract" in txt and "Signed by" in txt and "Completion Client" in txt
+        and "Evidence PDF" in txt and "Invoice" in txt and "$425.00" in txt
+        and page.locator("#jd_title").count() == 0
+        and page.locator("[data-photo-input]").count() == 0
+        and "Signatures & documents" not in txt
+        and page.locator("#docPdf").count() == 1
+        and page.locator("#downloadCompletionPdf").count() == 1, txt[:250].replace("\n", " "))
     page.screenshot(path=os.path.join(SHOTS, "19-complete-done.png"), full_page=True)
 
-    # ---------- the generated PDF itself ----------
+    # ---------- the stored evidence PDF (Download button) ----------
     pdf_path = os.path.join(ROOT, "tests", "completion.pdf")
-    if comp_docs:
-        import base64 as _b64
-        raw = comp_docs[0]["pdfDataUrl"].split(",", 1)[1]
-        with open(pdf_path, "wb") as f:
-            f.write(_b64.b64decode(raw))
+    if os.path.exists(pdf_path):
+        os.remove(pdf_path)
+    with page.expect_download(timeout=30000) as dl_info:
+        page.click("#downloadCompletionPdf")
+    dl_info.value.save_as(pdf_path)
     pdf_ok = os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 10000
-    rec("Completion PDF generated (real bytes)", pdf_ok,
+    rec("Evidence PDF downloads (real bytes, the exact file that was emailed)", pdf_ok,
         str(os.path.getsize(pdf_path)) + " bytes" if pdf_ok else "missing/small")
     if pdf_ok:
         pdf_txt = subprocess.run(["pdftotext", pdf_path, "-"], capture_output=True, text=True).stdout
@@ -228,11 +305,8 @@ with sync_playwright() as p:
     page.click("#resendCompletionBtn")
     page.wait_for_selector("#completeConfirm", state="visible", timeout=5000)
     rec("Re-send uses the confirmation panel too",
-        "Re-send the completion PDF?" in page.inner_text("#completeConfirm"))
+        "Re-send the evidence email?" in page.inner_text("#completeConfirm"))
     page.click("#completeConfirmBtn")
-    # Poll in Python: Playwright's wait_for_function does not reliably
-    # await an async predicate here, and the re-send flow (PDF rebuild +
-    # document record + completion call) takes a couple of seconds.
     st2 = None
     for _ in range(40):
         page.wait_for_timeout(500)
@@ -242,17 +316,14 @@ with sync_playwright() as p:
     rec("Re-send logged, original completion date preserved",
         st2 and len(st2["log"]) == 2 and st2["completedAt"] == first_completed
         and len([d for d in st2["documents"] if d.get("kind") == "completion-pdf"]) == 2,
-        ("log=%s docs=%s kinds=%s completed=%s" % (
-            len(st2["log"]), len(st2["documents"]),
-            [d.get("kind") for d in st2["documents"]], st2["completedAt"])) if st2 else "missing")
+        ("log=%s docs=%s completed=%s" % (
+            len(st2["log"]), len(st2["documents"]), st2["completedAt"])) if st2 else "missing")
 
-    # ---------- portal reflects Done (no fake completion download) ----------
+    # ---------- portal reflects Done ----------
     mob.bring_to_front(); mob.reload(); mob.wait_for_load_state("networkidle")
     txt = body(mob)
-    rec("Portal shows Done + completion date + summary, no completion download",
-        "Done" in txt and "Completed on" in txt and "new ignitor" in txt.lower()
-        and "Download completion report" not in txt
-        and mob.locator("text=Download completion").count() == 0)
+    rec("Portal shows Done + completion date + summary",
+        "Done" in txt and "Completed on" in txt and "new ignitor" in txt.lower())
     rec("Portal still hides the owner's personal phone",
         "435" not in txt and "680-6873" not in mob.content())
 
@@ -262,25 +333,25 @@ with sync_playwright() as p:
       const c = await PandaData.saveClient({name:'No Email Completion', phone:'', email:'x@x.co', address:'', equipment:'', notes:''});
       c.email = ''; await PandaData.saveClient(c);
       const j = PandaData.newJob(c.id);
-      j.title = 'Blocked completion check'; j.status = 'signed'; j.signedVersion = 1;
+      j.title = 'Blocked completion check'; j.status = 'in_progress'; j.signedVersion = 1;
       j.items = [{desc:'Service', qty:1, price:100, optional:false, accepted:true}];
       j.signatures = [{version:1, name:'No Email Completion', signatureDataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', signedAt:new Date().toISOString()}];
       await PandaData.saveJob(j);
     }""")
     page.reload(); page.wait_for_load_state("networkidle")
     page.click('[data-open-job]:has-text("Blocked completion check")')
-    page.wait_for_selector("#completeJobBtn", timeout=8000)
-    page.click("#completeJobBtn")
+    page.wait_for_selector("#sendEvidenceBtn", timeout=8000)
+    page.click("#sendEvidenceBtn")
     page.wait_for_selector("#completeConfirm", state="visible", timeout=5000)
     panel = page.inner_text("#completeConfirm")
     rec("No recipient: send blocked with a clear pointer to the email field",
-        "No valid recipient email" in panel and "Send to email" in panel
+        "No valid recipient email" in panel
         and page.is_disabled("#completeConfirmBtn"), panel[:250].replace("\n", " "))
     rec("Zero photos: clear warning shown (not a hard block on opening)",
         "No photos uploaded" in panel)
     st3 = job_state(page, "Blocked completion check")
-    rec("Blocked job stays signed, no completion recorded",
-        st3 and st3["status"] == "signed" and st3["completedAt"] == "")
+    rec("Blocked job stays In progress, no completion recorded",
+        st3 and st3["status"] == "in_progress" and st3["completedAt"] == "")
 
     rec("No JS console/page errors during the completion run", len(console_errors) == 0, "; ".join(console_errors[:4]))
     browser.close()

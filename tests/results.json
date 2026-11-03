@@ -1,0 +1,165 @@
+{
+  "results": [
+    {
+      "test": "Owner login (demo gate)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Create client persists",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Quote totals math (350 + 180 optional accepted = $530.00)",
+      "pass": true,
+      "detail": "$530.00"
+    },
+    {
+      "test": "Owner-only price reference helper present in panel",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Client link generated with token",
+      "pass": true,
+      "detail": "http://127.0.0.1:8765/#/c/b3d2757a7c2b791d1f0118f7"
+    },
+    {
+      "test": "Portal opens with quote (mobile)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Competitor reference NOT leaked to client",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Portal hides owner's personal phone, offers Email us",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Optional declined -> total drops to $350.00",
+      "pass": true,
+      "detail": "$350.00"
+    },
+    {
+      "test": "BLOCKED: empty signature",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "BLOCKED: terms not accepted",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Client signs successfully",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Signed view keeps the declined optional OUT (total $350.00)",
+      "pass": true,
+      "detail": "$350.00"
+    },
+    {
+      "test": "Signed PDF downloads",
+      "pass": true,
+      "detail": "517735 bytes"
+    },
+    {
+      "test": "Signed PDF has no owner phone, shows company email",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling Heating \u2022 Air Conditioning \u2022 Water Heaters angrypandahvac@gmail.com \u2022 Chicago, IL  Signe"
+    },
+    {
+      "test": "Signed view shows ONLY the Schedule card",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Furnace repair \u2014 no heat (verification)  Client: Verify Client \u2022 verify@example.com \u2022 (312) 555-0199 742 W Fulton St, Chicago"
+    },
+    {
+      "test": "Owner data: v1 signature recorded by Verify Client",
+      "pass": true,
+      "detail": "{\"sigs\": 1, \"signer\": \"Verify Client\", \"email\": \"demo \\u2014 not sent\", \"status\": \"signed\"}"
+    },
+    {
+      "test": "Demo email simulated & logged",
+      "pass": true,
+      "detail": "demo \u2014 not sent"
+    },
+    {
+      "test": "Email-failure path: signature + doc kept, status=failed",
+      "pass": true,
+      "detail": "failed|failed|1|2"
+    },
+    {
+      "test": "Owner sees 'Copy email failed' flag",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Portal still offers PDF after email failure",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Appointment save auto-advances Signed -> Scheduled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Start job lands on In progress with the evidence section",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Photo >5MB compressed to <=1600px",
+      "pass": true,
+      "detail": "{\"w\": 1600, \"h\": 1200, \"kb\": 1072} (original 12453 KB)"
+    },
+    {
+      "test": "Send evidence completes the job (Done view)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Portal shows before/after + summary + status",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Signed v1 signature + PDF preserved untouched",
+      "pass": true,
+      "detail": "{\"version\": 1, \"signedVersion\": 1, \"sigs\": 1, \"v1doc\": true, \"v1docIsPdf\": true}"
+    },
+    {
+      "test": "Portal shows the signed v1 agreement",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Bad token -> clear 'link not valid', no data leaked",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Bad-token page hides owner phone, offers Email us",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Desktop owner pipeline renders",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No JS console/page errors during the whole run",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

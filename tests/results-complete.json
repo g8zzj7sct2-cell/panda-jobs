@@ -1,0 +1,150 @@
+{
+  "results": [
+    {
+      "test": "Draft job: no evidence/completion buttons in the quote stage",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Client signed in the portal",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Signed view: Schedule card only (no title edit, no signatures card, no photos, no send card)",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Completion evidence check  Client: Completion Client \u2022 completion.client@example.com \u2022 (312) 555-0117 88 W Completion Ave, Ch"
+    },
+    {
+      "test": "Appointment email sent -> job advanced signed -> scheduled by itself",
+      "pass": true,
+      "detail": "{\"status\": \"scheduled\", \"completedAt\": \"\", \"startedAt\": \"\", \"finishedAt\": \"\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": [{\"version\": 1, \"kind\": \"signed-pdf\", \"pdfDataUrl\": \"data:application/pdf;filename=generated.pdf;bas"
+    },
+    {
+      "test": "Scheduled view: money summary only (total / paid / balance) + Start job",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs \ud83d\udce7 Appointment email sent to completion.client@example.com \u2014 the job moved to Scheduled. Completion evidence check  Client: Completion Client \u2022 completion.client@example.com \u2022 "
+    },
+    {
+      "test": "Start job -> In progress; start time recorded; invoice + evidence sections only",
+      "pass": true,
+      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": [{\"version\": 1, \"kind\": "
+    },
+    {
+      "test": "Finish work: finish time recorded, PDF generated with 3 of 3 photos, job still In progress",
+      "pass": true,
+      "detail": "\ud83c\udfc1 Work finished Nov 3, 2026, 2:56 AM. Evidence PDF generated: 3 of 3 photos embedded. Now press Send evidence."
+    },
+    {
+      "test": "Confirmation summarises the evidence + recipient",
+      "pass": true,
+      "detail": "Send the evidence and finish the job?  This will email the client the evidence PDF \u2014 with all the photos inside \u2014 plus the photos as attachments, and the job moves to Done by itself.  Assessment photos: 1 BEFORE photos: 1 AFTER photos: 1 Work summary: included Materials: included Recipient: completi"
+    },
+    {
+      "test": "Cancel leaves status + completion metadata untouched",
+      "pass": true,
+      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"2026-11-03T02:56:53.036Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": "
+    },
+    {
+      "test": "After confirm: Done view, completion date + demo email status shown",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Job completed (demo). The evidence email is simulated in demo mode \u2014 nothing was actually sent. Completion evidence check  Cl"
+    },
+    {
+      "test": "Send buttons replaced by the Done stage view",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Job persisted as Done with completion metadata + demo email log",
+      "pass": true,
+      "detail": "{\"status\": \"done\", \"completedAt\": \"2026-11-03T02:56:54.982Z\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"2026-11-03T02:56:53.036Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"demo \\u2014 not sent\", \"log\": [{\"at\": \"2026-11-03T02:56:55.023Z\", \"to\": \"completion-recipient@example.com\", \"s"
+    },
+    {
+      "test": "Unsaved execution form was persisted by the send flow",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Evidence document recorded WITH the exact PDF bytes + photo stats",
+      "pass": true,
+      "detail": "{\"version\": 1, \"kind\": \"completion-pdf\", \"pdfDataUrl\": \"data:application/pdf;base64,JVBERi0xLjMK\\u2026\", \"fileUrl\": \"\", \"recipient\": \"completion-recipient@example.com\", \"photoCounts\": {\"assessment\": 1, \"before\": 1, \"after\": 1}, \"embeddedPhotoCount\": 3, \"failedPhotoCount\": 0, \"completedAt\": \"2026-11-"
+    },
+    {
+      "test": "Photos are STILL stored after Done (never auto-deleted)",
+      "pass": true,
+      "detail": "{\"assessment\": 1, \"before\": 1, \"after\": 1}"
+    },
+    {
+      "test": "Done view: contract + evidence PDF + invoice only",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Job completed (demo). The evidence email is simulated in demo mode \u2014 nothing was actually sent. Completion evidence check  Client: Completion Client \u2022 completion.client@exampl"
+    },
+    {
+      "test": "Evidence PDF downloads (real bytes, the exact file that was emailed)",
+      "pass": true,
+      "detail": "570012 bytes"
+    },
+    {
+      "test": "PDF text: title, summary, materials, signature + photo headings",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling Heating \u2022 Air Conditioning \u2022 Water Heaters angrypandahvac@gmail.com \u2022 Chicago, IL  Job Completion Report Completion evidence check Status: Done Completed: 11/3/2026, 2:"
+    },
+    {
+      "test": "PDF has NO owner personal phone, shows company email",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "PDF embeds images (logo + signature + 3 photos >= 5)",
+      "pass": true,
+      "detail": "7 image rows"
+    },
+    {
+      "test": "Done job offers Re-send while email is not 'sent'",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Re-send uses the confirmation panel too",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Re-send logged, original completion date preserved",
+      "pass": true,
+      "detail": "log=2 docs=3 completed=2026-11-03T02:56:54.982Z"
+    },
+    {
+      "test": "Portal shows Done + completion date + summary",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Portal still hides the owner's personal phone",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No recipient: send blocked with a clear pointer to the email field",
+      "pass": true,
+      "detail": "Send the evidence and finish the job?  This will email the client the evidence PDF \u2014 with all the photos inside \u2014 plus the photos as attachments, and the job moves to Done by itself.  Assessment photos: 0 BEFORE photos: 0 AFTER photos: 0 Work summary"
+    },
+    {
+      "test": "Zero photos: clear warning shown (not a hard block on opening)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Blocked job stays In progress, no completion recorded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No JS console/page errors during the completion run",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

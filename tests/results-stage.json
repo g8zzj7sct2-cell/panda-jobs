@@ -1,0 +1,75 @@
+{
+  "results": [
+    {
+      "test": "New job screen has the client search field",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Search by NAME filters to the one client and selects her",
+      "pass": true,
+      "detail": "{\"visible\": [\"Aiko Tanaka \\u2014 aiko.t@example.com\"], \"value\": \"cli_5b2ccd58b56b1e4ec899bd07\"}"
+    },
+    {
+      "test": "Search by PHONE digits filters to John Smith",
+      "pass": true,
+      "detail": "{\"visible\": [\"John Smith \\u2014 john.smith@example.com\"], \"value\": \"cli_26b3c2339a5b210316239b57\"}"
+    },
+    {
+      "test": "Search by EMAIL filters to Maria Fernanda Lopez",
+      "pass": true,
+      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_400bc4ffd990cc5892cb60bc\"}"
+    },
+    {
+      "test": "Search by ADDRESS filters to the Fulton St client",
+      "pass": true,
+      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_400bc4ffd990cc5892cb60bc\"}"
+    },
+    {
+      "test": "No-match search hides every option and says so",
+      "pass": true,
+      "detail": "{\"visible\": [], \"value\": \"cli_400bc4ffd990cc5892cb60bc\"}"
+    },
+    {
+      "test": "Create job uses the client the search selected",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Search flow check  Client: Aiko Tanaka \u2022 aiko.t@example.com \u2022 (312) 555-0173 88 W Completion Ave, Chicago, IL  Job title Stat"
+    },
+    {
+      "test": "Seeded signed job: Schedule card only",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL Log out DEMO MODE \u2190 All jobs Seeded signed check  Client: John Smith \u2022 john.smith@example.com \u2022 (773) 555-0199 1200 S State St, Chicago, IL  Status: Signe"
+    },
+    {
+      "test": "In progress without a start stamp offers Start work",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Start work stamps startedAt and the button is replaced by the started line",
+      "pass": true,
+      "detail": "{\"status\": \"in_progress\", \"startedAt\": \"2026-11-03T02:57:08.688Z\", \"photosDeletedAt\": \"\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
+    },
+    {
+      "test": "Done job still holds its photos (2) and offers the confirm-delete button",
+      "pass": true,
+      "detail": "{\"status\": \"done\", \"startedAt\": \"\", \"photosDeletedAt\": \"\", \"photos\": {\"assessment\": 0, \"before\": 1, \"after\": 1}}"
+    },
+    {
+      "test": "DISMISSING the confirm dialog deletes nothing",
+      "pass": true,
+      "detail": "{\"status\": \"done\", \"startedAt\": \"\", \"photosDeletedAt\": \"\", \"photos\": {\"assessment\": 0, \"before\": 1, \"after\": 1}}"
+    },
+    {
+      "test": "CONFIRMING deletes the photos, stamps the purge, and the evidence PDF stays",
+      "pass": true,
+      "detail": "{\"status\": \"done\", \"startedAt\": \"\", \"photosDeletedAt\": \"2026-11-03T02:57:10.770Z\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
+    },
+    {
+      "test": "No JS console/page errors during the stage-flow run",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

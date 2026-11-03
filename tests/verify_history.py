@@ -28,6 +28,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
     page = ctx.new_page()
+    page.set_default_navigation_timeout(120000)
     page.on("dialog", lambda d: d.accept())
     page.goto(BASE + "/#/")
     page.wait_for_load_state("networkidle")
@@ -63,11 +64,12 @@ with sync_playwright() as p:
     page.fill("#jd_notes", "Installed new furnace and tested heat.")
     page.click("#saveExec")
     page.wait_for_timeout(800)
-    # Reopen the job: the completion zone renders for the saved status.
+    # Reopen the job: the Done/Invoiced stage view renders (ronda
+    # 2026-11-02: contract + evidence PDF + invoice + move to History).
     page.click("#backBtn")
     page.wait_for_timeout(800)
     page.click('[data-open-job]:has-text("History check")')
-    page.wait_for_selector("#jd_title", timeout=5000)
+    page.wait_for_selector("#archiveJobBtn", timeout=5000)
     rec("Archive button appears on an invoiced job", page.locator("#archiveJobBtn").count() == 1)
 
     # ---------- archive it ----------

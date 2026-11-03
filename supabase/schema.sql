@@ -48,6 +48,15 @@ create table if not exists public.jobs (
   -- from copy_email_status so completing a job never rewrites the
   -- signed-copy email history.
   completed_at timestamptz,
+  -- In Progress stage fields (2026-11-02): when the owner pressed
+  -- "Start work" / "Finish work"; how much the client has paid so far
+  -- (deposit / partial); and when the owner confirmed receipt of the
+  -- evidence email and deleted the job's photos from the app (photos
+  -- are temporary — the evidence lives in the completion PDF + email).
+  started_at timestamptz,
+  finished_at timestamptz,
+  amount_paid numeric not null default 0,
+  photos_deleted_at timestamptz,
   archived_at timestamptz,
   completion_email_status text not null default '',
   completion_email_log jsonb not null default '[]'::jsonb,

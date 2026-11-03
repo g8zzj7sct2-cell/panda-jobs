@@ -389,5 +389,6 @@
   window.PandaPDF = { build: buildPdf, download: downloadPdf, dataUrl: pdfDataUrl, base64: pdfBase64,
     buildCompletion: buildCompletionPdf, completionBase64: completionBase64,
     completionDataUrl: completionDataUrl, completionDownload: completionDownload,
+    photoToJpeg: imageSourceToJpeg,
     totals: totals, total: jobTotal, money: money, COMPANY: COMPANY };
 })();

@@ -20,20 +20,32 @@
 //      "quote" — the panel history therefore only lists REAL sends.
 //      A failed send logs nothing and returns emailStatus "failed".
 //
-// action "complete" (owner presses "Complete job" in the panel):
+// action "complete" (owner presses "Send evidence" on the In progress
+// stage — ronda 2026-11-02):
 //   1. Verify the token identifies a SIGNED job in a completable state
 //      (signed / scheduled / in_progress, or done for a re-send).
-//   2. Mark the job Done server-side (status + completed_at; a re-send
-//      keeps the original completed_at) and record the completion PDF
-//      document row in the panel flow (data.saveDocument, kind
-//      "completion-pdf") — this function does not duplicate that row.
-//   3. Email the browser-generated evidence PDF to the recipient (the
-//      panel's per-job override wins; the panel passes it explicitly),
-//      with a bcc copy to the company. Email failure NEVER undoes the
-//      completion: the job keeps status "done" and gets the DISTINCT
-//      completion_email_status "failed" (+ completion_email_log entry),
-//      so the signed-copy status is never overwritten.
+//   2. Email FIRST: the browser-generated evidence PDF (payload
+//      pdfBase64, pdf.js adaptive profiles keep it <= ~2.75M base64
+//      chars) plus every photo as an individual JPEG attachment
+//      (payload photoAttachments), to the recipient with a bcc copy to
+//      the company. The email body keeps the summary (work, materials,
+//      final total) and the portal button as backup. Server-side PDF
+//      generation is NOT done here — it died on the CPU limit (546).
+//   3. ONLY when the email actually went out, mark the job Done
+//      server-side (status + completed_at; a re-send keeps the
+//      original completed_at). If the email FAILS, the job KEEPS its
+//      current stage (it is NOT moved to Done) and gets the DISTINCT
+//      completion_email_status "failed" (+ completion_email_log entry)
+//      so the owner can fix the address and send again; the signed-copy
+//      status is never overwritten either way.
+//   The completion document row is recorded in the panel flow
+//   (data.saveDocument, kind "completion-pdf") — this function does
+//   not duplicate that row.
 //   Response: { ok: true, emailStatus: "sent" | "failed", completedAt }.
+//
+// action "send-schedule" (owner saves the appointment on a signed job):
+//   Emails the client the appointment date; on success, a job still in
+//   "signed" advances to "scheduled" automatically (ronda 2026-11-02).
 //
 // Flow:
 //   1. Look the job up by its client token with the SERVICE ROLE key
@@ -120,6 +132,44 @@ async function completeJob(
     return json({ error: "token and a valid recipientEmail are required" }, 400);
   }
 
+  /* Evidence attachments (ronda 2026-11-02). The browser builds the
+     PDF (pdf.js adaptive profiles cap it at ~2.75M base64 chars) and
+     converts each photo to a JPEG; this worker only attaches, which
+     keeps its CPU profile tiny — generating PDFs server-side is what
+     died with the 546 limit. Everything is size-guarded: an oversized
+     PDF fails the send honestly (the job is NOT moved to Done), and
+     if the combined attachments would get huge, the individual photo
+     attachments are dropped first (the PDF already contains them). */
+  const PDF_B64_MAX = 3000000;
+  const PHOTO_B64_MAX = 1500000;
+  const TOTAL_B64_MAX = 10000000;
+  let pdfBase64: string | null = null;
+  let pdfError = "";
+  if (typeof payload.pdfBase64 === "string" && payload.pdfBase64) {
+    if (payload.pdfBase64.length <= PDF_B64_MAX) pdfBase64 = payload.pdfBase64;
+    else pdfError = "The evidence PDF is too large to email";
+  }
+  type PhotoAtt = { filename: string; contentType: string; encoding: "base64"; content: string };
+  const photoAtts: PhotoAtt[] = [];
+  if (Array.isArray(payload.photoAttachments)) {
+    for (const raw of payload.photoAttachments.slice(0, 30)) {
+      const a = raw as Record<string, unknown>;
+      const content = typeof a.content === "string" ? a.content : "";
+      const ct = a.contentType === "image/png" ? "image/png" : "image/jpeg";
+      if (!content || content.length > PHOTO_B64_MAX) continue;
+      const fn = String(a.filename ?? "photo.jpg").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "photo.jpg";
+      photoAtts.push({ filename: fn, contentType: ct, encoding: "base64", content });
+    }
+  }
+  let droppedPhotoAtts = 0;
+  if (pdfBase64) {
+    let totalB64 = pdfBase64.length + photoAtts.reduce((s, a) => s + a.content.length, 0);
+    while (totalB64 > TOTAL_B64_MAX && photoAtts.length) {
+      totalB64 -= photoAtts.pop()!.content.length;
+      droppedPhotoAtts++;
+    }
+  }
+
   // 1) Job by token (service role — server-side only)
   const { data: job, error: jobErr } = await supabase
     .from("jobs").select("*, clients(*)").eq("token", token).single();
@@ -132,22 +182,14 @@ async function completeJob(
     return json({ error: "This job is not in a state that can be completed" }, 409);
   }
 
-  // 3) Mark Done BEFORE emailing — an email failure never rolls this back.
   const completedAt = resend && job.completed_at
     ? String(job.completed_at)
     : (requestedCompletedAt ?? (job.completed_at ? String(job.completed_at) : new Date().toISOString()));
-  const { error: doneErr } = await supabase.from("jobs").update({
-    status: "done",
-    completed_at: completedAt,
-    updated_at: new Date().toISOString(),
-  }).eq("id", job.id);
-  if (doneErr) return json({ error: "Could not mark the job done: " + doneErr.message }, 500);
 
-  // 4) Email the evidence IN the email (client + company bcc copy).
-  //    Rigo's call (2026-10-28): no PDF attachment — the giant base64
-  //    PDF kept killing the worker (CPU limit). The email itself now
-  //    carries the summary, the totals and the photos (hosted images),
-  //    plus the portal button where the signed agreement lives.
+  // 3) Compose the email. Body = backup summary (work, materials,
+  //    final total) + the portal button; the evidence itself rides as
+  //    attachments. Only when NO PDF was supplied do we fall back to
+  //    the 2026-10-28 evidence-in-the-email rendering (hosted photos).
   const client = (job as { clients?: { email?: string; name?: string } }).clients ?? {};
   const photos = (job.photos ?? {}) as Record<string, unknown>;
   const photoGroups = [
@@ -159,12 +201,22 @@ async function completeJob(
     urls: (Array.isArray(photos[g.kind]) ? photos[g.kind] : [])
       .filter((u): u is string => typeof u === "string" && /^https?:\/\//i.test(u)),
   }));
-  const photoCounts = {
+  const serverCounts = {
     assessment: photoGroups[0].urls.length,
     before: photoGroups[1].urls.length,
     after: photoGroups[2].urls.length,
   };
+  const payloadCounts = (payload.photoCounts ?? null) as Record<string, unknown> | null;
+  const photoCounts = {
+    assessment: payloadCounts ? cleanCount(payloadCounts.assessment) : serverCounts.assessment,
+    before: payloadCounts ? cleanCount(payloadCounts.before) : serverCounts.before,
+    after: payloadCounts ? cleanCount(payloadCounts.after) : serverCounts.after,
+  };
   const totalPhotos = photoCounts.assessment + photoCounts.before + photoCounts.after;
+  const embeddedPhotoCount = typeof payload.embeddedPhotoCount === "number"
+    ? cleanCount(payload.embeddedPhotoCount) : (pdfBase64 ? totalPhotos : totalPhotos);
+  const failedPhotoCount = (typeof payload.failedPhotoCount === "number"
+    ? cleanCount(payload.failedPhotoCount) : 0) + droppedPhotoAtts;
   const { data: items } = await supabase
     .from("quote_items").select("qty, price, accepted").eq("job_id", job.id);
   const quoteTotal = (items ?? []).filter((i) => i.accepted)
@@ -173,8 +225,9 @@ async function completeJob(
     ? quoteTotal : Number(job.final_total);
   const link = `${APP_URL}#/c/${token}`;
   let emailStatus: "sent" | "failed" = "failed";
-  let emailError = "";
+  let emailError = pdfError;
   try {
+    if (pdfError) throw new Error(pdfError);
     const appPassword = (Deno.env.get("GMAIL_APP_PASSWORD") ?? "").replace(/\s+/g, "");
     if (!appPassword) throw new Error("GMAIL_APP_PASSWORD secret is not set");
     const smtp = new SMTPClient({
@@ -194,7 +247,9 @@ async function completeJob(
     if (job.work_notes) lines.push(``, `Work performed:`, String(job.work_notes));
     if (job.materials) lines.push(``, `Materials used:`, String(job.materials));
     lines.push(``, `Final total: ${usd(finalTotal)}`);
-    if (totalPhotos) {
+    if (pdfBase64) {
+      lines.push(``, `Attached to this email: your completion report (PDF) with all the photo evidence inside (${photoCounts.assessment} assessment, ${photoCounts.before} before, ${photoCounts.after} after)${photoAtts.length ? ", plus each photo as an individual file" : ""}. You can also review the work and your signed agreement any time from your personal link:`);
+    } else if (totalPhotos) {
       lines.push(``, `Photo evidence is included in this email (${photoCounts.assessment} assessment, ${photoCounts.before} before, ${photoCounts.after} after) and in your personal link:`);
     } else {
       lines.push(``, `You can review the work and your signed agreement any time from your personal link:`);
@@ -208,7 +263,7 @@ async function completeJob(
     );
     const completeText = lines.join("\n");
     let completeHtml = htmlFromText(completeText, { url: link, label: "View your job details" });
-    if (totalPhotos) {
+    if (!pdfBase64 && totalPhotos) {
       let sections = "";
       for (const g of photoGroups) {
         if (!g.urls.length) continue;
@@ -218,6 +273,14 @@ async function completeJob(
       }
       completeHtml = completeHtml.replace(/<\/div>$/, sections + "</div>");
     }
+    const attachments: PhotoAtt[] = [];
+    if (pdfBase64) {
+      attachments.push({
+        filename: "Angry-Panda-Completion-Report.pdf",
+        contentType: "application/pdf", encoding: "base64", content: pdfBase64,
+      });
+    }
+    for (const a of photoAtts) attachments.push(a);
     await smtp.send({
       from: `${COMPANY.name} <${SENDER.email}>`,
       replyTo: COMPANY.email,
@@ -226,6 +289,7 @@ async function completeJob(
       subject: `Your job completion report - ${COMPANY.name}`,
       content: asciiSafe(completeText),
       html: completeHtml,
+      ...(attachments.length ? { attachments } : {}),
     });
     await smtp.close();
     emailStatus = "sent";
@@ -233,19 +297,30 @@ async function completeJob(
     emailError = e instanceof Error ? e.message : String(e);
   }
 
-  // 5) Distinct completion email status + log (signed-copy fields untouched)
+  // 4) Record the outcome. SUCCESS also moves the job to Done (the
+  //    email is really out — ronda 2026-11-02); FAILURE only records
+  //    the failed attempt and the job KEEPS its current stage so the
+  //    send can be fixed and retried (a re-send on an already-Done job
+  //    naturally leaves it Done).
   const priorLog = Array.isArray(job.completion_email_log) ? job.completion_email_log : [];
   const entry: Record<string, unknown> = {
     at: new Date().toISOString(), to: recipient, status: emailStatus,
-    photoCounts, embeddedPhotoCount: totalPhotos, failedPhotoCount: 0,
-    note: "Evidence in email (no PDF attachment)",
+    photoCounts, embeddedPhotoCount, failedPhotoCount,
+    note: emailStatus === "sent"
+      ? (pdfBase64 ? `Evidence PDF + ${photoAtts.length} photo attachment(s) emailed` : "Evidence in email (no PDF attachment)")
+      : "Evidence email failed — job NOT moved to Done",
   };
   if (emailError) entry.error = emailError;
-  await supabase.from("jobs").update({
+  const upd: Record<string, unknown> = {
     completion_email_status: emailStatus,
     completion_email_log: [...priorLog, entry],
     updated_at: new Date().toISOString(),
-  }).eq("id", job.id);
+  };
+  if (emailStatus === "sent") {
+    upd.status = "done";
+    upd.completed_at = completedAt;
+  }
+  await supabase.from("jobs").update(upd).eq("id", job.id);
 
   return json({
     ok: true, emailStatus, completedAt,
@@ -473,10 +548,15 @@ async function sendSchedule(
   if (emailError) return json({ ok: true, emailStatus: "failed", emailError });
 
   const priorLog = Array.isArray(job.send_log) ? job.send_log : [];
-  await supabase.from("jobs").update({
+  const schedUpd: Record<string, unknown> = {
     send_log: [...priorLog, { channel: "Email", at: new Date().toISOString(), to: recipient, kind: "schedule" }],
     updated_at: new Date().toISOString(),
-  }).eq("id", job.id);
+  };
+  // Ronda 2026-11-02: the appointment email is really out, so a signed
+  // (approved) job advances to "scheduled" by itself — Rigo no longer
+  // moves it by hand.
+  if (job.status === "signed") schedUpd.status = "scheduled";
+  await supabase.from("jobs").update(schedUpd).eq("id", job.id);
 
   return json({ ok: true, emailStatus: "sent" });
 }

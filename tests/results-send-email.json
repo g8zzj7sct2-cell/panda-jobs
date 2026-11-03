@@ -1,0 +1,85 @@
+{
+  "results": [
+    {
+      "test": "Email field exists and is prefilled with the client's stored email A",
+      "pass": true,
+      "detail": "client-a@example.com"
+    },
+    {
+      "test": "Email button starts enabled for A and is a button (no mailto href)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "After overwriting with B, Email stays a no-href button (recipient read at click time)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "'Save as client email' appears when the typed address differs from the client's",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Send history line shows 'Sent via Email to B \u00b7 <date/time>'",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "sendLog entry records channel Email + recipient B, job.sendEmail = B, status advanced",
+      "pass": true,
+      "detail": "{\"sendEmail\": \"spouse-b@example.com\", \"log\": [{\"channel\": \"Email\", \"at\": \"2026-11-03T02:56:14.140Z\", \"to\": \"spouse-b@example.com\"}], \"status\": \"quote\"}"
+    },
+    {
+      "test": "Field still shows B after reload (job.sendEmail persisted) and history line remains",
+      "pass": true,
+      "detail": "spouse-b@example.com"
+    },
+    {
+      "test": "'Save as client email' still offered after reload (B differs from stored A)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Client record now holds email B",
+      "pass": true,
+      "detail": "spouse-b@example.com"
+    },
+    {
+      "test": "Save link hides once the field matches the client's email",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Invalid address: visible error shown, Email disabled, nothing new logged",
+      "pass": true,
+      "detail": "That doesn't look like a valid email address \u2014 check it before sending. Nothing was sent."
+    },
+    {
+      "test": "Clicking with an invalid address still sends/logs nothing",
+      "pass": true,
+      "detail": "log length 1"
+    },
+    {
+      "test": "No stored email: field empty with hint, Email disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Typing a valid address enables Email (no-href button, not disabled)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "NO WhatsApp anywhere in the job detail",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "No JS console/page errors during the check",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}
