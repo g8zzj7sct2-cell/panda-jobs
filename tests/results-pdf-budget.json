@@ -1,0 +1,30 @@
+{
+  "results": [
+    {
+      "test": "PandaPDF.completionBase64 is available on the page",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "10 worst-case noise photos (source ~25984710 chars) produce base64 <= 2,750,000",
+      "pass": true,
+      "detail": "base64=1382152"
+    },
+    {
+      "test": "overBudget is falsy (small/emergency profiles actually fit)",
+      "pass": true,
+      "detail": "overBudget=False"
+    },
+    {
+      "test": "All 10 photos attempted and embedded, none dropped",
+      "pass": true,
+      "detail": "{\"attempted\": 10, \"embedded\": 10, \"failed\": 0}"
+    },
+    {
+      "test": "No JS console/page errors during the budget run",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

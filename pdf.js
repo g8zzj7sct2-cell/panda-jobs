@@ -347,8 +347,14 @@
     { maxDim: 1400, quality: 0.84 },
     { maxDim: 1100, quality: 0.74 },
     { maxDim: 900, quality: 0.64 },
-    { maxDim: 760, quality: 0.55 }
+    { maxDim: 760, quality: 0.55 },
+    { maxDim: 620, quality: 0.5 },
+    { maxDim: 500, quality: 0.45 }
   ];
+  /* Last-resort pass when even the smallest regular profile overflows
+     the mail budget (very photo-heavy jobs): tiny photos rather than
+     an unsendable PDF. */
+  var EMERGENCY_PROFILE = { maxDim: 420, quality: 0.4 };
   async function completionBase64(job, client, opts) {
     opts = opts || {};
     var last = null;
@@ -356,10 +362,23 @@
       var o2 = Object.assign({}, opts, { photoProfile: PHOTO_PROFILES[i] });
       var r = await buildCompletionPdf(job, client, o2);
       var b64 = r.doc.output("datauristring").split(",")[1];
-      last = { base64: b64, stats: r.stats };
-      if (b64.length <= COMPLETION_B64_BUDGET) break;
+      last = { base64: b64, stats: r.stats, overBudget: false };
+      if (b64.length <= COMPLETION_B64_BUDGET) return last;
     }
-    return last;
+    var oE = Object.assign({}, opts, { photoProfile: EMERGENCY_PROFILE });
+    var rE = await buildCompletionPdf(job, client, oE);
+    var b64E = rE.doc.output("datauristring").split(",")[1];
+    if (b64E.length <= COMPLETION_B64_BUDGET) {
+      return { base64: b64E, stats: rE.stats, overBudget: false };
+    }
+    /* Pathological case: nothing fit. Hand back the SMALLEST build we
+       produced, flagged overBudget so the caller can refuse to send
+       instead of bouncing off the mail worker's hard limit. */
+    if (last && last.base64.length <= b64E.length) {
+      last.overBudget = true;
+      return last;
+    }
+    return { base64: b64E, stats: rE.stats, overBudget: true };
   }
   async function completionDataUrl(job, client, opts) {
     var r = await buildCompletionPdf(job, client, opts);

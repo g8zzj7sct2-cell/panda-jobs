@@ -889,7 +889,7 @@
        done:        Re-send evidence (while the email is not "sent") and
                     Confirm-receipt-&-delete-photos live in this view. */
     var completionMode = "complete";
-    var evidencePdf = null; // {jobId, base64, stats} from Finish work (or built lazily by Send)
+    var evidencePdf = null; // {jobId, base64, stats, overBudget} from Finish work (or built lazily by Send)
     function completionCounts() {
       return {
         assessment: (job.photos.assessment || []).length,
@@ -981,7 +981,7 @@
     async function ensureEvidencePdf() {
       if (evidencePdf && evidencePdf.jobId === job.id) return evidencePdf;
       var built = await window.PandaPDF.completionBase64(job, client, { completedAt: job.completedAt || new Date().toISOString() });
-      evidencePdf = { jobId: job.id, base64: built.base64, stats: built.stats };
+      evidencePdf = { jobId: job.id, base64: built.base64, stats: built.stats, overBudget: built.overBudget === true };
       return evidencePdf;
     }
 
@@ -1069,6 +1069,18 @@
         // 2) Evidence PDF (browser-generated; Finish work usually built
         //    it already) + every photo as a JPEG attachment.
         var built3 = await ensureEvidencePdf();
+        // Hard stop BEFORE anything is recorded or sent: the mail
+        // worker rejects a PDF over its hard limit, so an over-budget
+        // build must never leave the browser (completionBase64 steps
+        // the photos down + has an emergency pass + flags overBudget;
+        // this also guards a stale cached pdf.js that lacks those).
+        if (built3.overBudget || built3.base64.length > 2750000) {
+          panelMsg.innerHTML = errBox("The evidence PDF is still too large to email even after reducing the photos. Remove some photos and try again.");
+          completeConfirmBtn.disabled = false;
+          if (completeCancel) completeCancel.disabled = false;
+          completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send email" : "Yes, send evidence & finish";
+          return;
+        }
         var attachments = [];
         var attachFailed = 0;
         var kinds = ["assessment", "before", "after"];
