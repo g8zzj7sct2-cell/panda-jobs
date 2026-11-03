@@ -23,7 +23,7 @@
     {
       "test": "Client link generated with token",
       "pass": true,
-      "detail": "http://127.0.0.1:8765/#/c/b3d2757a7c2b791d1f0118f7"
+      "detail": "http://127.0.0.1:8765/#/c/75efc6e972ba808aa490dc91"
     },
     {
       "test": "Portal opens with quote (mobile)",

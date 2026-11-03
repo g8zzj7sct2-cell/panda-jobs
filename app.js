@@ -889,7 +889,7 @@
        done:        Re-send evidence (while the email is not "sent") and
                     Confirm-receipt-&-delete-photos live in this view. */
     var completionMode = "complete";
-    var evidencePdf = null; // {jobId, base64, stats, overBudget} from Finish work (or built lazily by Send)
+    var evidencePdf = null; // {jobId, base64, stats, overBudget, debugTrail, debug, finalMode} from Finish work (or built lazily by Send)
     function completionCounts() {
       return {
         assessment: (job.photos.assessment || []).length,
@@ -981,7 +981,9 @@
     async function ensureEvidencePdf() {
       if (evidencePdf && evidencePdf.jobId === job.id) return evidencePdf;
       var built = await window.PandaPDF.completionBase64(job, client, { completedAt: job.completedAt || new Date().toISOString() });
-      evidencePdf = { jobId: job.id, base64: built.base64, stats: built.stats, overBudget: built.overBudget === true };
+      evidencePdf = { jobId: job.id, base64: built.base64, stats: built.stats, overBudget: built.overBudget === true,
+        debugTrail: built.debugTrail || null, debug: built.debug || null,
+        finalMode: built.debugTrail ? built.debugTrail.finalMode : "photos" };
       return evidencePdf;
     }
 
@@ -1000,7 +1002,8 @@
         if (fm) fm.innerHTML = '<div class="notice ok">🏁 Work finished ' + fmtDate(job.finishedAt) + ". Evidence PDF generated: <b>" +
           built2.stats.embeddedPhotoCount + " of " + built2.stats.attemptedPhotoCount + " photos</b> embedded" +
           (built2.stats.failedPhotoCount ? " — <b>" + built2.stats.failedPhotoCount + " photo(s) could not be embedded</b>" : "") +
-          '. Now press <b>Send evidence</b>.</div>';
+          '. Now press <b>Send evidence</b>.' +
+          '<br><span class="small">(PDF: ' + (built2.base64.length * 3 / 4 / 1048576).toFixed(2) + " MB · mode: " + (built2.finalMode || "photos") + ')</span></div>';
       } catch (e) {
         if (fm) fm.innerHTML = errBox("Could not generate the evidence PDF: " + (e.message || e));
       }
@@ -1030,6 +1033,7 @@
         '<li>Work summary: <b>' + (notes ? "included" : "not written") + '</b></li>' +
         '<li>Materials: <b>' + (mats ? "included" : "not written") + '</b></li>' +
         '<li>Recipient: <b>' + esc(recipient || "(no email)") + '</b></li></ul>';
+      if (evidencePdf && evidencePdf.jobId === job.id && evidencePdf.finalMode === "no-photos") bodyHtml += '<div class="notice warn">The PDF is too large with photos inside, so the photos will go as attachments only.</div>';
       if (!totalPhotos) bodyHtml += '<div class="notice warn"><b>No photos uploaded.</b> The email will still be sent, but it will contain no photo evidence. Add photos first if the client should receive them.</div>';
       if (!okRecipient) bodyHtml += errBox("No valid recipient email — type one in the \u201cSend evidence to email\u201d field (or fix the client's email in the Clients tab). Nothing was sent and the job was NOT finished.");
       document.getElementById("completeConfirmBody").innerHTML = bodyHtml;
@@ -1075,11 +1079,27 @@
         // the photos down + has an emergency pass + flags overBudget;
         // this also guards a stale cached pdf.js that lacks those).
         if (built3.overBudget || built3.base64.length > 2750000) {
-          panelMsg.innerHTML = errBox("The evidence PDF is still too large to email even after reducing the photos. Remove some photos and try again.");
+          var dbgText = "";
+          if (built3.debug) {
+            var dParts = (built3.debug.photos || []).map(function (dp) {
+              return dp.kind + " #" + (dp.index + 1) + ": " + dp.srcChars + "→" + dp.outChars + " chars (" + dp.natW + "×" + dp.natH + ")";
+            });
+            dbgText = "Debug — build sizes tried: " + (((built3.debugTrail || {}).sizes) || []).join(", ") +
+              " chars · logo: " + built3.debug.logoChars + " chars · signature: " + built3.debug.sigChars + " chars" +
+              (dParts.length ? " · photos: " + dParts.join("; ") : "");
+          }
+          panelMsg.innerHTML = errBox("The evidence PDF is still too large to email even after reducing the photos. Remove some photos and try again.") +
+            (dbgText ? '<p class="small muted">' + esc(dbgText) + "</p>" : "");
           completeConfirmBtn.disabled = false;
           if (completeCancel) completeCancel.disabled = false;
           completeConfirmBtn.textContent = completionMode === "resend" ? "Yes, re-send email" : "Yes, send evidence & finish";
           return;
+        }
+        // Photos-as-attachments fallback: the PDF carries no photos
+        // inside (they still go out as individual attachments), so the
+        // send proceeds — just say so plainly while it works.
+        if (built3.finalMode === "no-photos") {
+          panelMsg.innerHTML = '<div class="notice warn">The PDF is too large with photos inside, so the photos will go as attachments only.</div>';
         }
         var attachments = [];
         var attachFailed = 0;

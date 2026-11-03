@@ -184,7 +184,7 @@
       var ctx = canvas.getContext("2d");
       ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
-      return { dataUrl: canvas.toDataURL("image/jpeg", quality || 0.84), width: w, height: h };
+      return { dataUrl: canvas.toDataURL("image/jpeg", quality || 0.84), width: w, height: h, natW: img.naturalWidth, natH: img.naturalHeight };
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     }
@@ -209,6 +209,11 @@
       attempted += counts[g.kind];
     });
     var embedded = 0, failed = 0;
+    /* Debug instrumentation: real per-component sizes, so a size blowup
+       in ANY browser can be attributed (logo / signature / each photo's
+       source size, natural dimensions and produced JPEG size). */
+    var debugPhotos = [];
+    var skipPhotos = opts.skipPhotoEmbed === true;
     function ensure(space) { if (y + space > 730) { doc.addPage(); y = 48; } }
     function text(str, size, style, gap) {
       doc.setFont("helvetica", style || "normal"); doc.setFontSize(size || 11);
@@ -292,18 +297,34 @@
 
     /* Photo evidence */
     text("PHOTO EVIDENCE", 10, "bold", 2);
-    text("Photos included in this report: " + attempted + " (" +
-      counts.assessment + " assessment, " + counts.before + " before, " + counts.after + " after).", 10.5, "normal", 6);
+    if (skipPhotos) {
+      text("Photos in this report: 0 of " + attempted + " — every photo is attached separately to this email (" +
+        counts.assessment + " assessment, " + counts.before + " before, " + counts.after + " after).", 10.5, "normal", 6);
+    } else {
+      text("Photos included in this report: " + attempted + " (" +
+        counts.assessment + " assessment, " + counts.before + " before, " + counts.after + " after).", 10.5, "normal", 6);
+    }
     for (var gi = 0; gi < groups.length; gi++) {
       var g = groups[gi];
       var photos = ((job.photos || {})[g.kind] || []);
       text(g.heading + " (" + photos.length + ")", 12, "bold", 4);
       if (!photos.length) { text("No " + g.kind + " photos were uploaded.", 10.5, "normal", 6); continue; }
+      if (skipPhotos) {
+        for (var spi = 0; spi < photos.length; spi++) {
+          debugPhotos.push({ kind: g.kind, index: spi, srcKind: /^data:/i.test(photos[spi]) ? "data" : "url",
+            srcChars: String(photos[spi] || "").length, natW: 0, natH: 0, outChars: 0, outW: 0, outH: 0 });
+        }
+        text("Photos are attached separately to this email.", 10.5, "normal", 6);
+        continue;
+      }
       for (var pi = 0; pi < photos.length; pi++) {
         var caption = g.caption + " " + (pi + 1);
         try {
           var prof = opts.photoProfile || {};
           var loaded = await imageSourceToJpeg(photos[pi], prof.maxDim, prof.quality);
+          debugPhotos.push({ kind: g.kind, index: pi, srcKind: /^data:/i.test(photos[pi]) ? "data" : "url",
+            srcChars: String(photos[pi] || "").length, natW: loaded.natW || 0, natH: loaded.natH || 0,
+            outChars: loaded.dataUrl.length, outW: loaded.width, outH: loaded.height });
           var iw = Math.min(maxW, 460);
           var ih = iw * loaded.height / loaded.width;
           if (ih > 320) { ih = 320; iw = ih * loaded.width / loaded.height; }
@@ -315,6 +336,9 @@
           embedded++;
         } catch (e) {
           failed++;
+          debugPhotos.push({ kind: g.kind, index: pi, srcKind: /^data:/i.test(photos[pi]) ? "data" : "url",
+            srcChars: String(photos[pi] || "").length, natW: 0, natH: 0, outChars: 0, outW: 0, outH: 0,
+            error: String((e && e.message) || e) });
           ensure(30);
           doc.setFont("helvetica", "normal"); doc.setFontSize(10.5); doc.setTextColor(160, 40, 35);
           doc.text(caption + " — this photo could not be embedded in the PDF.", M, y);
@@ -334,7 +358,10 @@
       doc.text(COMPANY.email + " • " + COMPANY.city, M, 770);
     }
     doc.setTextColor(0);
-    return { doc: doc, stats: { photoCounts: counts, attemptedPhotoCount: attempted, embeddedPhotoCount: embedded, failedPhotoCount: failed } };
+    var stats = { photoCounts: counts, attemptedPhotoCount: attempted, embeddedPhotoCount: embedded, failedPhotoCount: failed,
+      debug: { logoChars: logo ? logo.length : 0, sigChars: sig && sig.signatureDataUrl ? sig.signatureDataUrl.length : 0, photos: debugPhotos } };
+    if (skipPhotos) stats.photosSkipped = true;
+    return { doc: doc, stats: stats };
   }
 
   /* The mail worker has a hard CPU ceiling: a completion PDF much above
@@ -355,30 +382,46 @@
      the mail budget (very photo-heavy jobs): tiny photos rather than
      an unsendable PDF. */
   var EMERGENCY_PROFILE = { maxDim: 420, quality: 0.4 };
+  /* One step below emergency: 300px thumbnails (finalMode "thumb300"). */
+  var THUMB_PROFILE = { maxDim: 300, quality: 0.35 };
+  /* Ladder, first fit wins: full profiles → emergency 420 → thumb 300
+     → NO photos inside the PDF at all (finalMode "no-photos"; the
+     photos still reach the client as individual email attachments).
+     The no-photos build is text-only, so the send can only stay
+     blocked if even THAT overflows — overBudget is set only then.
+     Every attempt's size is recorded in debugTrail.sizes, and the
+     winning build's stats.debug carries the per-component sizes, so
+     any future blowup can be diagnosed from the user's own screen. */
   async function completionBase64(job, client, opts) {
     opts = opts || {};
-    var last = null;
-    for (var i = 0; i < PHOTO_PROFILES.length; i++) {
-      var o2 = Object.assign({}, opts, { photoProfile: PHOTO_PROFILES[i] });
+    var budget = opts.budget || COMPLETION_B64_BUDGET;
+    var sizes = [];
+    async function attempt(o2) {
       var r = await buildCompletionPdf(job, client, o2);
       var b64 = r.doc.output("datauristring").split(",")[1];
-      last = { base64: b64, stats: r.stats, overBudget: false };
-      if (b64.length <= COMPLETION_B64_BUDGET) return last;
+      sizes.push(b64.length);
+      return { base64: b64, stats: r.stats };
     }
-    var oE = Object.assign({}, opts, { photoProfile: EMERGENCY_PROFILE });
-    var rE = await buildCompletionPdf(job, client, oE);
-    var b64E = rE.doc.output("datauristring").split(",")[1];
-    if (b64E.length <= COMPLETION_B64_BUDGET) {
-      return { base64: b64E, stats: rE.stats, overBudget: false };
+    function finish(built, mode, over) {
+      return { base64: built.base64, stats: built.stats, overBudget: over === true,
+        debug: built.stats.debug || null,
+        debugTrail: { sizes: sizes, finalMode: mode } };
     }
-    /* Pathological case: nothing fit. Hand back the SMALLEST build we
-       produced, flagged overBudget so the caller can refuse to send
-       instead of bouncing off the mail worker's hard limit. */
-    if (last && last.base64.length <= b64E.length) {
-      last.overBudget = true;
-      return last;
+    var i, built;
+    for (i = 0; i < PHOTO_PROFILES.length; i++) {
+      built = await attempt(Object.assign({}, opts, { photoProfile: PHOTO_PROFILES[i] }));
+      if (built.base64.length <= budget) return finish(built, "photos", false);
     }
-    return { base64: b64E, stats: rE.stats, overBudget: true };
+    built = await attempt(Object.assign({}, opts, { photoProfile: EMERGENCY_PROFILE }));
+    if (built.base64.length <= budget) return finish(built, "photos", false);
+    built = await attempt(Object.assign({}, opts, { photoProfile: THUMB_PROFILE }));
+    if (built.base64.length <= budget) return finish(built, "thumb300", false);
+    built = await attempt(Object.assign({}, opts, { skipPhotoEmbed: true }));
+    /* The no-photos build is the terminal guarantee: judge it against
+       the REAL mail budget even when opts.budget forced the ladder
+       down for testing — if a text-only report fits the mail budget,
+       the send is never blocked. */
+    return finish(built, "no-photos", built.base64.length > COMPLETION_B64_BUDGET);
   }
   async function completionDataUrl(job, client, opts) {
     var r = await buildCompletionPdf(job, client, opts);

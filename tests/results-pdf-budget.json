@@ -6,9 +6,9 @@
       "detail": ""
     },
     {
-      "test": "10 worst-case noise photos (source ~25984710 chars) produce base64 <= 2,750,000",
+      "test": "10 worst-case noise photos (source ~25983658 chars) produce base64 <= 2,750,000",
       "pass": true,
-      "detail": "base64=1382152"
+      "detail": "base64=1379912"
     },
     {
       "test": "overBudget is falsy (small/emergency profiles actually fit)",
@@ -19,6 +19,31 @@
       "test": "All 10 photos attempted and embedded, none dropped",
       "pass": true,
       "detail": "{\"attempted\": 10, \"embedded\": 10, \"failed\": 0}"
+    },
+    {
+      "test": "Forced budget=10 ends in finalMode 'no-photos' (photos go as attachments)",
+      "pass": true,
+      "detail": "finalMode='no-photos'"
+    },
+    {
+      "test": "Forced budget=10: overBudget falsy and base64 sane (< 400,000)",
+      "pass": true,
+      "detail": "overBudget=False b64len=359420"
+    },
+    {
+      "test": "Forced budget=10: no photos embedded, photosSkipped set, all 9 ladder attempts recorded",
+      "pass": true,
+      "detail": "{\"embedded\": 0, \"photosSkipped\": true, \"sizes\": 9}"
+    },
+    {
+      "test": "Debug sizes present: logo/signature chars + per-photo src->out with natural dims",
+      "pass": true,
+      "detail": "[{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598803, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598559, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"after\", \"index\": 0, \"sr"
+    },
+    {
+      "test": "Forced budget=400,000 fits with photos inside (photos/thumb300 mode), all embedded",
+      "pass": true,
+      "detail": "{\"b64len\": 377708, \"overBudget\": false, \"finalMode\": \"thumb300\", \"sizes\": 8, \"embedded\": 3, \"photosSkipped\": false, \"logoChars\": 123626, \"sigChars\": 0, \"debugPhotos\": [{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598803, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5191, \"outW\": 300, \"outH\": 225}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598559, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5167, \"outW\": 300, \"outH\": 225}, {\"kind\": \"after\", \"index\": 0, \"srcKind\":"
     },
     {
       "test": "No JS console/page errors during the budget run",

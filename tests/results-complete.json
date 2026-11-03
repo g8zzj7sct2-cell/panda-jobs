@@ -28,12 +28,12 @@
     {
       "test": "Start job -> In progress; start time recorded; invoice + evidence sections only",
       "pass": true,
-      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": [{\"version\": 1, \"kind\": "
+      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T20:28:25.343Z\", \"finishedAt\": \"\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": [{\"version\": 1, \"kind\": "
     },
     {
       "test": "Finish work: finish time recorded, PDF generated with 3 of 3 photos, job still In progress",
       "pass": true,
-      "detail": "\ud83c\udfc1 Work finished Nov 3, 2026, 2:56 AM. Evidence PDF generated: 3 of 3 photos embedded. Now press Send evidence."
+      "detail": "\ud83c\udfc1 Work finished Nov 3, 2026, 8:28 PM. Evidence PDF generated: 3 of 3 photos embedded. Now press Send evidence. (PDF: 0.54 MB \u00b7 mode: photos)"
     },
     {
       "test": "Confirmation summarises the evidence + recipient",
@@ -43,7 +43,7 @@
     {
       "test": "Cancel leaves status + completion metadata untouched",
       "pass": true,
-      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"2026-11-03T02:56:53.036Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": "
+      "detail": "{\"status\": \"in_progress\", \"completedAt\": \"\", \"startedAt\": \"2026-11-03T20:28:25.343Z\", \"finishedAt\": \"2026-11-03T20:28:26.280Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"\", \"log\": [], \"documents\": "
     },
     {
       "test": "After confirm: Done view, completion date + demo email status shown",
@@ -58,7 +58,7 @@
     {
       "test": "Job persisted as Done with completion metadata + demo email log",
       "pass": true,
-      "detail": "{\"status\": \"done\", \"completedAt\": \"2026-11-03T02:56:54.982Z\", \"startedAt\": \"2026-11-03T02:56:52.003Z\", \"finishedAt\": \"2026-11-03T02:56:53.036Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"demo \\u2014 not sent\", \"log\": [{\"at\": \"2026-11-03T02:56:55.023Z\", \"to\": \"completion-recipient@example.com\", \"s"
+      "detail": "{\"status\": \"done\", \"completedAt\": \"2026-11-03T20:28:28.531Z\", \"startedAt\": \"2026-11-03T20:28:25.343Z\", \"finishedAt\": \"2026-11-03T20:28:26.280Z\", \"amountPaid\": 100, \"completionEmailStatus\": \"demo \\u2014 not sent\", \"log\": [{\"at\": \"2026-11-03T20:28:28.576Z\", \"to\": \"completion-recipient@example.com\", \"s"
     },
     {
       "test": "Unsaved execution form was persisted by the send flow",
@@ -88,7 +88,7 @@
     {
       "test": "PDF text: title, summary, materials, signature + photo headings",
       "pass": true,
-      "detail": "Angry Panda Heating and Cooling Heating \u2022 Air Conditioning \u2022 Water Heaters angrypandahvac@gmail.com \u2022 Chicago, IL  Job Completion Report Completion evidence check Status: Done Completed: 11/3/2026, 2:"
+      "detail": "Angry Panda Heating and Cooling Heating \u2022 Air Conditioning \u2022 Water Heaters angrypandahvac@gmail.com \u2022 Chicago, IL  Job Completion Report Completion evidence check Status: Done Completed: 11/3/2026, 8:"
     },
     {
       "test": "PDF has NO owner personal phone, shows company email",
@@ -113,7 +113,7 @@
     {
       "test": "Re-send logged, original completion date preserved",
       "pass": true,
-      "detail": "log=2 docs=3 completed=2026-11-03T02:56:54.982Z"
+      "detail": "log=2 docs=3 completed=2026-11-03T20:28:28.531Z"
     },
     {
       "test": "Portal shows Done + completion date + summary",
