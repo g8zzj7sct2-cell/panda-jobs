@@ -314,6 +314,7 @@
     },
     _fetchJobParts: async function (jobId) {
       var items = await client().from("quote_items").select("*").eq("job_id", jobId).order("sort_order");
+      if (items.error) throw items.error; // a failed read must never assemble a hollow job: any later save would wipe the quote's items
       var sigs = await client().from("signatures").select("*").eq("job_id", jobId);
       var photos = await client().from("photos").select("*").eq("job_id", jobId).order("created_at");
       var docs = await client().from("documents").select("*").eq("job_id", jobId).order("created_at");
@@ -367,7 +368,8 @@
       }
       if (res.error) throw res.error;
       j.id = res.data.id;
-      await client().from("quote_items").delete().eq("job_id", j.id);
+      var delItems = await client().from("quote_items").delete().eq("job_id", j.id);
+      if (delItems.error) throw delItems.error; // abort before re-inserting: never leave the quote half-rewritten
       if (j.items.length) {
         var rows = j.items.map(function (it, ix) { return { job_id: j.id, description: it.desc, qty: it.qty, price: it.price, optional: !!it.optional, accepted: !!it.accepted, sort_order: ix }; });
         var ins = await client().from("quote_items").insert(rows); if (ins.error) throw ins.error;
@@ -375,6 +377,21 @@
       return j;
     },
     deleteJob: async function (id) {
+      // Remove the job's photo files from Storage first (same discipline
+      // as deleteJobPhotos) so a deleted job leaves no public files behind.
+      var ph = await client().from("photos").select("image_url").eq("job_id", id);
+      if (ph.error) throw ph.error;
+      var marker = "/job-photos/";
+      var paths = (ph.data || []).map(function (r) {
+        var ix = String(r.image_url || "").indexOf(marker);
+        return ix >= 0 ? decodeURIComponent(String(r.image_url).slice(ix + marker.length)) : null;
+      }).filter(Boolean);
+      if (paths.length) {
+        var rm = await client().storage.from("job-photos").remove(paths);
+        if (rm.error) throw rm.error;
+        var delPh = await client().from("photos").delete().eq("job_id", id);
+        if (delPh.error) throw delPh.error;
+      }
       var res = await client().from("jobs").delete().eq("id", id); if (res.error) throw res.error; return true;
     },
     // Client portal reads ONLY through the token-checked RPC.
@@ -405,6 +422,13 @@
     removePhoto: async function (jobId, kind, idx) {
       var res = await client().from("photos").select("*").eq("job_id", jobId).eq("kind", kind).order("created_at");
       var row = (res.data || [])[idx]; if (!row) return Live.getJob(jobId);
+      var marker = "/job-photos/";
+      var ix = String(row.image_url || "").indexOf(marker);
+      if (ix >= 0) {
+        var path = decodeURIComponent(String(row.image_url).slice(ix + marker.length));
+        var rm = await client().storage.from("job-photos").remove([path]);
+        if (rm.error) throw rm.error; // delete the file with the record — never leave a "deleted" photo publicly reachable
+      }
       await client().from("photos").delete().eq("id", row.id);
       return Live.getJob(jobId);
     },

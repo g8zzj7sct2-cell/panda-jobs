@@ -728,12 +728,19 @@
     document.getElementById("logoutBtn").addEventListener("click", doLogout);
     var addItemBtn = document.getElementById("addItem");
     if (addItemBtn) addItemBtn.addEventListener("click", async function () {
+      var beforeItems = JSON.stringify(job.items);
       readQuoteFromForm(job); job.items.push({ desc: "", qty: 1, price: 0, optional: false, accepted: true });
+      if (job.signedVersion === job.version && JSON.stringify(job.items) !== beforeItems) job.version += 1; // signed version stays locked; new version needs a new signature
       await D.saveJob(job); renderJobDetail(job.id);
     });
     app.addEventListener("input", recalcTotals);
     document.querySelectorAll("[data-del-item]").forEach(function (b) {
-      b.addEventListener("click", async function () { readQuoteFromForm(job); job.items.splice(+b.getAttribute("data-del-item"), 1); await D.saveJob(job); renderJobDetail(job.id); });
+      b.addEventListener("click", async function () {
+        var beforeItems = JSON.stringify(job.items);
+        readQuoteFromForm(job); job.items.splice(+b.getAttribute("data-del-item"), 1);
+        if (job.signedVersion === job.version && JSON.stringify(job.items) !== beforeItems) job.version += 1; // signed version stays locked; new version needs a new signature
+        await D.saveJob(job); renderJobDetail(job.id);
+      });
     });
     var saveQuoteBtn = document.getElementById("saveQuote");
     if (saveQuoteBtn) saveQuoteBtn.addEventListener("click", async function () {

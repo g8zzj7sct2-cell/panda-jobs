@@ -161,7 +161,10 @@
     doc.setFont("helvetica", "bold"); doc.setFontSize(12);
     ensure(20); doc.text("Total: " + money(tot), M, y); y += 17;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
-    if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit) + "   •   Balance due on completion: " + money(tot - job.deposit), M, y); y += 16; }
+    var paidAmt = Number(job.amountPaid || 0);
+    if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit), M, y); y += 16; }
+    if (paidAmt > 0) { ensure(15); doc.text("Amount paid: " + money(paidAmt), M, y); y += 16; }
+    ensure(15); doc.text("Balance due on completion: " + money(tot - paidAmt), M, y); y += 16;
     if (job.finalTotal != null) { ensure(15); doc.text("Final total confirmed in writing before work began.", M, y); y += 16; }
     y += 6; rule();
 
@@ -331,7 +334,10 @@
     doc.setFont("helvetica", "bold"); doc.setFontSize(12);
     ensure(20); doc.text("Final total: " + money(tot), M, y); y += 17;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
-    if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit) + "   •   Balance due on completion: " + money(tot - job.deposit), M, y); y += 16; }
+    var paidAmt = Number(job.amountPaid || 0);
+    if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit), M, y); y += 16; }
+    if (paidAmt > 0) { ensure(15); doc.text("Amount paid: " + money(paidAmt), M, y); y += 16; }
+    ensure(15); doc.text("Balance due on completion: " + money(tot - paidAmt), M, y); y += 16;
     y += 6; rule();
 
     /* Signature (the one for the currently signed version if present) */
