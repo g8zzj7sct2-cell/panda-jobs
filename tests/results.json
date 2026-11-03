@@ -23,7 +23,7 @@
     {
       "test": "Client link generated with token",
       "pass": true,
-      "detail": "http://127.0.0.1:8765/#/c/75efc6e972ba808aa490dc91"
+      "detail": "http://127.0.0.1:8765/#/c/a6a2229658b54ca649a2bc3e"
     },
     {
       "test": "Portal opens with quote (mobile)",
@@ -68,7 +68,7 @@
     {
       "test": "Signed PDF downloads",
       "pass": true,
-      "detail": "517735 bytes"
+      "detail": "274594 bytes"
     },
     {
       "test": "Signed PDF has no owner phone, shows company email",

@@ -45,6 +45,59 @@
     } catch (e) { return null; }
   }
 
+  /* The client's signature is a big TRANSPARENT PNG straight off the
+   * signature pad canvas. jsPDF embeds PNGs as raw pixels (~4 bytes
+   * per pixel, effectively uncompressed), so a large mostly-empty
+   * canvas (e.g. 2200x1100 with a data URL of only ~18K chars) adds
+   * 3-13 MB to EVERY PDF that carries it, in any browser — this was
+   * the real cause of the "evidence PDF too large" failures
+   * (2026-11-03), not the photos. Normalise the signature through a
+   * canvas first (white background, max 500px wide) and embed the
+   * small JPEG instead, the same treatment the photos get. If
+   * anything fails, the ORIGINAL data URL is returned untouched:
+   * never lose the signature. */
+  async function signatureToJpeg(sig) {
+    var src = sig && sig.signatureDataUrl;
+    if (!src) return { dataUrl: src, width: 0, height: 0 };
+    try {
+      var img = await new Promise(function (resolve, reject) {
+        var im = new Image();
+        im.onload = function () { resolve(im); };
+        im.onerror = function () { reject(new Error("Signature could not be loaded")); };
+        im.src = src;
+      });
+      if (!img.naturalWidth || !img.naturalHeight) throw new Error("Signature has no dimensions");
+      var scale = Math.min(1, 500 / img.naturalWidth);
+      var w = Math.max(1, Math.round(img.naturalWidth * scale));
+      var h = Math.max(1, Math.round(img.naturalHeight * scale));
+      var canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      return { dataUrl: canvas.toDataURL("image/jpeg", 0.85), width: w, height: h };
+    } catch (e) {
+      return { dataUrl: src, width: 0, height: 0 };
+    }
+  }
+
+  /* Display box for the signature image: 200pt wide and at most 60pt
+   * tall, aspect preserved from the normalised image. When the
+   * normalised size is unknown (raw PNG fallback), keep the classic
+   * 200x60 box. */
+  function signatureBox(sigImg) {
+    if (sigImg && sigImg.width && sigImg.height) {
+      var w = 200, h = 200 * sigImg.height / sigImg.width;
+      if (h > 60) { h = 60; w = 60 * sigImg.width / sigImg.height; }
+      return { w: w, h: h };
+    }
+    return { w: 200, h: 60 };
+  }
+
+  function signatureFormat(sigImg) {
+    return /^data:image\/jpeg/i.test((sigImg && sigImg.dataUrl) || "") ? "JPEG" : "PNG";
+  }
+
   async function buildPdf(job, client, opts) {
     opts = opts || {};
     if (!window.jspdf || !window.jspdf.jsPDF) throw new Error("jsPDF not loaded");
@@ -129,7 +182,9 @@
     if (sig) {
       text("CLIENT ACCEPTANCE", 10, "bold", 2);
       ensure(95);
-      try { doc.addImage(sig.signatureDataUrl, "PNG", M, y, 200, 60); } catch (e) {}
+      var sigImgA = await signatureToJpeg(sig);
+      var sigBoxA = signatureBox(sigImgA);
+      try { doc.addImage(sigImgA.dataUrl, signatureFormat(sigImgA), M, y, sigBoxA.w, sigBoxA.h); } catch (e) {}
       doc.setDrawColor(120); doc.line(M, y + 62, M + 210, y + 62);
       y += 78;
       text("Signed by: " + sig.name, 11, "bold", 0);
@@ -213,6 +268,7 @@
        in ANY browser can be attributed (logo / signature / each photo's
        source size, natural dimensions and produced JPEG size). */
     var debugPhotos = [];
+    var sigOutChars = 0;
     var skipPhotos = opts.skipPhotoEmbed === true;
     function ensure(space) { if (y + space > 730) { doc.addPage(); y = 48; } }
     function text(str, size, style, gap) {
@@ -285,7 +341,10 @@
     text("SIGNATURE", 10, "bold", 2);
     if (sig) {
       ensure(95);
-      try { doc.addImage(sig.signatureDataUrl, "PNG", M, y, 200, 60); } catch (e) {}
+      var sigImg = await signatureToJpeg(sig);
+      sigOutChars = sigImg.dataUrl ? sigImg.dataUrl.length : 0;
+      var sigBox = signatureBox(sigImg);
+      try { doc.addImage(sigImg.dataUrl, signatureFormat(sigImg), M, y, sigBox.w, sigBox.h); } catch (e) {}
       doc.setDrawColor(120); doc.line(M, y + 62, M + 210, y + 62);
       y += 78;
       text("Signed by: " + sig.name, 11, "bold", 0);
@@ -359,7 +418,7 @@
     }
     doc.setTextColor(0);
     var stats = { photoCounts: counts, attemptedPhotoCount: attempted, embeddedPhotoCount: embedded, failedPhotoCount: failed,
-      debug: { logoChars: logo ? logo.length : 0, sigChars: sig && sig.signatureDataUrl ? sig.signatureDataUrl.length : 0, photos: debugPhotos } };
+      debug: { logoChars: logo ? logo.length : 0, sigChars: sig && sig.signatureDataUrl ? sig.signatureDataUrl.length : 0, sigOutChars: sigOutChars, photos: debugPhotos } };
     if (skipPhotos) stats.photosSkipped = true;
     return { doc: doc, stats: stats };
   }
