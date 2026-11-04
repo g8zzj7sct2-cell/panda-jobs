@@ -298,7 +298,7 @@
     var clients = await D.listClients();
     var client = clients.filter(function (c) { return c.id === job.clientId; })[0];
     var sig = signedSig(job);
-    var total = job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job);
+    var total = grandTotal(job);
     var html = headerHTML('<button class="btn small light" id="logoutBtn">Log out</button>');
     html += '<main class="wrap wide"><div class="btn-row"><button class="btn light small" id="backHistory">← Job history</button></div>';
     html += '<div id="histMsg"></div>';
@@ -334,7 +334,7 @@
       '<table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr>' +
       job.items.filter(function (it) { return !it.optional || it.accepted; }).map(function (it) {
         return "<tr><td>" + esc(it.desc) + '</td><td class="num">' + it.qty + '</td><td class="num">' + money(it.qty * it.price) + "</td></tr>";
-      }).join("") +
+      }).join("") + extrasRowsHTML(job) +
       '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num">' + money(total) + "</td></tr></table>" +
       (job.deposit ? '<p class="small muted">Deposit at signing: <b>' + money(job.deposit) + "</b></p>" : "") +
       '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
@@ -376,11 +376,34 @@
     });
   }
 
+  /* Added costs ("agregados") are their own mini-document: items plus
+     their own version + signatures, signed separately from the quote. */
+  function extrasObj(job) {
+    var e = job && job.extras;
+    if (Array.isArray(e)) return { items: e, version: 1, signedVersion: 0, signatures: [] };
+    if (e && typeof e === "object") {
+      return { items: Array.isArray(e.items) ? e.items : [], version: Number(e.version) || 1,
+        signedVersion: Number(e.signedVersion) || 0, signatures: Array.isArray(e.signatures) ? e.signatures : [] };
+    }
+    return { items: [], version: 1, signedVersion: 0, signatures: [] };
+  }
+  function extrasSig(job) {
+    var e = extrasObj(job), s = null;
+    e.signatures.forEach(function (sg) { if (sg.version === e.signedVersion) s = sg; });
+    return s;
+  }
+
+  /* Final-invoice total: the quote total (or the owner's final total
+     when set) PLUS the added costs recorded during the job. */
+  function grandTotal(job) {
+    return (job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job)) + window.PandaPDF.extrasTotal(job);
+  }
+
   /* Payment label: the owner's Paid declaration rules (cash/check may
      never be typed into Amount paid), and amounts can only ADD a PAID —
      never leave it "pending" once the amounts cover the total. */
   function payPill(job) {
-    var total = job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job);
+    var total = grandTotal(job);
     var paid = Number(job.amountPaid || 0);
     return (job.paymentStatus === "paid" || (total > 0 && paid >= total)) ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>';
   }
@@ -409,13 +432,24 @@
 
   /* The finished invoice: accepted items + totals + money state.
      Used by the In progress and Done views (read-only). */
+  /* Added-costs rows for invoice tables (own section, per Rigo's order:
+     the agregados live apart from the quote and show on the final invoice). */
+  function extrasRowsHTML(job) {
+    var extras = extrasObj(job).items.filter(function (x) { return x.desc || Number(x.price) > 0; });
+    if (!extras.length) return "";
+    return '<tr><td colspan="3" style="padding-top:10px"><b>Agregados de costos</b> <span class="muted small">(added during the job)</span></td></tr>' +
+      extras.map(function (x) {
+        return "<tr><td>" + esc(x.desc || "Added cost") + '</td><td class="num">' + (Number(x.qty) || 0) + '</td><td class="num">' + money((Number(x.qty) || 0) * (Number(x.price) || 0)) + "</td></tr>";
+      }).join("");
+  }
+
   function invoiceHTML(job) {
-    var total = job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job);
+    var total = grandTotal(job);
     var paid = Number(job.amountPaid || 0);
     return '<table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr>' +
       job.items.filter(function (it) { return !it.optional || it.accepted; }).map(function (it) {
         return "<tr><td>" + esc(it.desc) + '</td><td class="num">' + it.qty + '</td><td class="num">' + money(it.qty * it.price) + "</td></tr>";
-      }).join("") +
+      }).join("") + extrasRowsHTML(job) +
       '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num">' + money(total) + "</td></tr></table>" +
       (job.deposit ? '<p class="small muted">Deposit at signing: <b>' + money(job.deposit) + "</b></p>" : "") +
       '<p class="small">Amount paid: <b>' + money(paid) + '</b> · Balance due: <b>' + money(Math.max(0, total - paid)) + "</b><br>" +
@@ -614,6 +648,20 @@
     } else if (st === "in_progress") {
     /* IN PROGRESS — ONLY the finished invoice + the evidence section. */
     html += '<div class="card"><h2>🧾 Invoice</h2>' + invoiceHTML(job) + "</div>";
+    html += '<div class="card" id="extrasCard"><h2>➕ Agregados de costos</h2>' +
+      '<p class="small muted">Costos extra que salieron durante el trabajo — son un documento aparte de la cotización: el cliente los firma por separado desde su enlace, y al final se unen en un solo documento con los totales sumados.</p>' +
+      '<div id="exrows">';
+    extrasObj(job).items.forEach(function (x, i) { html += exrowHTML(x, i); });
+    html += "</div>" +
+      '<button class="btn light small" id="addExtra">+ Agregar costo</button>' +
+      '<p style="margin-top:10px"><b>Agregados: <span id="extrasTotalLbl">' + money(window.PandaPDF.extrasTotal(job)) + "</span></b></p>";
+    var exNow = extrasObj(job), exSigNow = extrasSig(job);
+    if (exNow.items.length) {
+      html += '<p class="small">' + (exSigNow && exNow.signedVersion === exNow.version
+        ? '✍️ <b>Firmados</b> por ' + esc(exSigNow.name) + " el " + fmtDate(exSigNow.signedAt) + " (versión " + exNow.version + "). Si los editas, el cliente tendrá que firmar la nueva versión."
+        : "⏳ <b>Pendientes de la firma del cliente</b> (versión " + exNow.version + ") — se firman desde el enlace del cliente.") + "</p>";
+    }
+    html += "</div>";
     html += '<div class="card"><h2>📸 Evidence</h2>' +
       '<label class="f">Work performed (summary the client will see)</label><textarea id="jd_notes">' + esc(job.workNotes) + "</textarea>" +
       '<label class="f">Materials used</label><textarea id="jd_materials">' + esc(job.materials) + "</textarea>" +
@@ -689,6 +737,15 @@
     wireJobDetail(job, client, link, sendMsg);
   }
 
+  function exrowHTML(x, i) {
+    return '<div class="qrow" data-ex-row="' + i + '">' +
+      '<input type="text" data-ex="desc" placeholder="Descripción del costo extra" value="' + esc(x.desc || "") + '">' +
+      '<input type="number" data-ex="qty" min="0" step="1" value="' + (x.qty == null ? 1 : x.qty) + '">' +
+      '<input type="number" data-ex="price" min="0" step="0.01" value="' + (x.price == null ? 0 : x.price) + '">' +
+      '<span class="small muted" data-ex-line>' + money((Number(x.qty) || 0) * (Number(x.price) || 0)) + "</span>" +
+      '<button class="del" data-del-extra="' + i + '" title="Remove">×</button></div>';
+  }
+
   function qrowHTML(it, i) {
     return '<div class="qrow" data-qrow="' + i + '">' +
       '<input type="text" data-f="desc" placeholder="Description" value="' + esc(it.desc) + '">' +
@@ -762,6 +819,29 @@
         var beforeItems = JSON.stringify(job.items);
         readQuoteFromForm(job); job.items.splice(+b.getAttribute("data-del-item"), 1);
         if (job.signedVersion === job.version && JSON.stringify(job.items) !== beforeItems) job.version += 1; // signed version stays locked; new version needs a new signature
+        await D.saveJob(job); renderJobDetail(job.id);
+      });
+    });
+    /* Added costs (In progress): same harvest-then-save pattern; extras
+       are their own document, so edits never touch the quote's version —
+       but editing a SIGNED extras version bumps the extras version so
+       the client signs the new amounts (same lock as the quote). */
+    function bumpExtrasIfSigned(j) {
+      var e = extrasObj(j);
+      if (e.signedVersion > 0 && e.signedVersion === e.version) { e.version += 1; j.extras = e; }
+    }
+    var addExtraBtn = document.getElementById("addExtra");
+    if (addExtraBtn) addExtraBtn.addEventListener("click", async function () {
+      readExecutionInto(job);
+      var e = extrasObj(job); e.items.push({ desc: "", qty: 1, price: 0 }); job.extras = e;
+      bumpExtrasIfSigned(job);
+      await D.saveJob(job); renderJobDetail(job.id);
+    });
+    document.querySelectorAll("[data-del-extra]").forEach(function (b) {
+      b.addEventListener("click", async function () {
+        readExecutionInto(job);
+        var e = extrasObj(job); e.items.splice(+b.getAttribute("data-del-extra"), 1); job.extras = e;
+        bumpExtrasIfSigned(job);
         await D.saveJob(job); renderJobDetail(job.id);
       });
     });
@@ -937,6 +1017,20 @@
       var f = document.getElementById("jd_final"); if (f) target.finalTotal = f.value === "" ? null : parseFloat(f.value);
       var p = document.getElementById("jd_pay"); if (p) target.paymentStatus = p.value;
       var s = document.getElementById("jd_sched"); if (s) target.scheduledAt = s.value;
+      if (document.getElementById("extrasCard")) {
+        var cur = extrasObj(target);
+        var ex = [];
+        document.querySelectorAll("[data-ex-row]").forEach(function (r) {
+          var dEl = r.querySelector('[data-ex="desc"]'), qEl = r.querySelector('[data-ex="qty"]'), pEl = r.querySelector('[data-ex="price"]');
+          var d = dEl ? dEl.value.trim() : "";
+          var q = qEl ? (parseFloat(qEl.value) || 0) : 0;
+          var pr = pEl ? (parseFloat(pEl.value) || 0) : 0;
+          ex.push({ desc: d, qty: q > 0 ? q : 1, price: pr }); // keep every row: indices must stay aligned with the delete buttons; blanks are filtered at display/total time
+        });
+        var changed = JSON.stringify(ex) !== JSON.stringify(cur.items);
+        var nextVersion = (changed && cur.signedVersion > 0 && cur.signedVersion === cur.version) ? cur.version + 1 : cur.version;
+        target.extras = { items: ex, version: nextVersion, signedVersion: cur.signedVersion, signatures: cur.signatures };
+      }
       return target;
     }
 
@@ -1508,6 +1602,38 @@
     }
     html += "</section>";
 
+    /* Added costs — their own addendum, signed separately; at the end
+       they join the signed agreement in one final document. */
+    var exP = extrasObj(job);
+    var exItemsP = exP.items.filter(function (x) { return x.desc || Number(x.price) > 0; });
+    if (exItemsP.length) {
+      var exSignedP = exP.signedVersion > 0 && exP.signedVersion === exP.version;
+      var exSigP = extrasSig(job);
+      var exPrevP = (!exSignedP && exP.signatures.length) ? exP.signatures[exP.signatures.length - 1] : null;
+      html += '<section class="card"><h2>Agregados de costos (added costs)</h2>' +
+        '<p class="muted small">Extra costs that came up during the job — separate from your signed agreement above (addendum version ' + exP.version + ").</p>";
+      if (exPrevP) html += '<div class="notice warn">You signed the added costs (version ' + exPrevP.version + ") on " + fmtDate(exPrevP.signedAt) + ". They were updated to <b>version " + exP.version + "</b> — please review and sign the new version below. Your signed version stays on file, unchanged.</div>";
+      html += '<table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr>' +
+        exItemsP.map(function (x) {
+          return "<tr><td>" + esc(x.desc || "Added cost") + '</td><td class="num">' + (Number(x.qty) || 0) + '</td><td class="num">' + money((Number(x.qty) || 0) * (Number(x.price) || 0)) + "</td></tr>";
+        }).join("") +
+        '<tr class="total"><td colspan="2">Added costs total</td><td class="num">' + money(window.PandaPDF.extrasTotal(job)) + "</td></tr></table>";
+      if (exSignedP && exSigP) {
+        html += '<div class="sig-locked"><p><b>✓ Signed</b> by ' + esc(exSigP.name) + "<br><span class=\"muted small\">" + fmtDate(exSigP.signedAt) + "</span></p>" +
+          '<img src="' + exSigP.signatureDataUrl + '" alt="Client signature for added costs"></div>' +
+          '<p class="small muted">At the end, this addendum and your signed agreement are joined into one final document with the totals added together.</p>';
+      } else {
+        html += '<div id="exSignMsg"></div>' +
+          '<label class="f">Your full name (printed)</label><input type="text" id="exSigName" autocomplete="name" placeholder="e.g. Maria Lopez">' +
+          '<label class="f">Sign with your finger or mouse</label>' +
+          '<div class="sig-wrap"><canvas class="sig" id="exSigPad" width="640" height="190"></canvas><div class="sig-hint" id="exSigHint">Sign here</div></div>' +
+          '<div class="btn-row"><button class="btn light small" id="exSigClear">Clear signature</button></div>' +
+          '<label class="check"><input type="checkbox" id="exAgree"><span>I agree to these added costs and authorize Angry Panda Heating and Cooling to include them in my final invoice.</span></label>' +
+          '<div class="btn-row"><button class="btn primary" id="exSignBtn">Sign added costs</button></div>';
+      }
+      html += "</section>";
+    }
+
     /* Progress: before / after + summary */
     if (beforePhotos.length || afterPhotos.length || job.workNotes || job.status === "done" || job.status === "invoiced") {
       html += '<section class="card"><h2>Your job</h2>';
@@ -1552,6 +1678,42 @@
         if (el && job.finalTotal == null) el.textContent = money(window.PandaPDF.total(job));
       });
     });
+    /* Added-costs signature pad — the addendum is its own document, so
+       it is wired whether or not the quote still needs signing. */
+    var exCanvas = document.getElementById("exSigPad");
+    if (exCanvas) {
+      var exCtx = exCanvas.getContext("2d");
+      var exDrawing = false, exInk = false, exLast = null;
+      exCtx.lineWidth = 2.4; exCtx.lineCap = "round"; exCtx.lineJoin = "round"; exCtx.strokeStyle = "#14261a";
+      function exPos(e) { var r = exCanvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * (exCanvas.width / r.width), y: (e.clientY - r.top) * (exCanvas.height / r.height) }; }
+      exCanvas.addEventListener("pointerdown", function (e) { e.preventDefault(); exDrawing = true; exLast = exPos(e); try { exCanvas.setPointerCapture(e.pointerId); } catch (err) {} });
+      exCanvas.addEventListener("pointermove", function (e) {
+        if (!exDrawing) return; e.preventDefault();
+        var p = exPos(e); exCtx.beginPath(); exCtx.moveTo(exLast.x, exLast.y); exCtx.lineTo(p.x, p.y); exCtx.stroke(); exLast = p;
+        if (!exInk) { exInk = true; var h = document.getElementById("exSigHint"); if (h) h.style.display = "none"; }
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { exCanvas.addEventListener(ev, function () { exDrawing = false; }); });
+      document.getElementById("exSigClear").addEventListener("click", function () {
+        exCtx.clearRect(0, 0, exCanvas.width, exCanvas.height); exInk = false;
+        var h = document.getElementById("exSigHint"); if (h) h.style.display = "";
+      });
+      document.getElementById("exSignBtn").addEventListener("click", async function () {
+        var msg = document.getElementById("exSignMsg");
+        var name = document.getElementById("exSigName").value.trim();
+        if (!exInk) { msg.innerHTML = errBox("Please sign in the box above — your signature is required."); exCanvas.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+        if (!name) { msg.innerHTML = errBox("Please type your full name."); return; }
+        if (!document.getElementById("exAgree").checked) { msg.innerHTML = errBox("Please check “I agree to these added costs” to continue."); return; }
+        var btn = this; btn.disabled = true; btn.textContent = "Signing…";
+        try {
+          await D.signExtras(job.token, { name: name, signatureDataUrl: exCanvas.toDataURL("image/png") });
+          renderClient(job.token);
+          window.scrollTo(0, 0);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = "Sign added costs";
+          msg.innerHTML = errBox("Something went wrong while signing: " + (e.message || e) + " — please try again or contact us by email.");
+        }
+      });
+    }
     if (alreadySigned) return;
 
     /* Signature pad — pointer events (finger on iOS, mouse on PC) */

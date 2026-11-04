@@ -31,6 +31,23 @@
     });
     return t;
   }
+  /* Added costs ("agregados"): extra charges recorded during the job,
+     OUTSIDE the signed quote — their own addendum, signed separately,
+     merged into the final invoice only (never the signed agreement). */
+  function extrasObj(job) {
+    var e = job && job.extras;
+    if (Array.isArray(e)) return { items: e, version: 1, signedVersion: 0, signatures: [] };
+    if (e && typeof e === "object") {
+      return { items: Array.isArray(e.items) ? e.items : [], version: Number(e.version) || 1,
+        signedVersion: Number(e.signedVersion) || 0, signatures: Array.isArray(e.signatures) ? e.signatures : [] };
+    }
+    return { items: [], version: 1, signedVersion: 0, signatures: [] };
+  }
+  function extrasTotal(job) {
+    var t = 0;
+    extrasObj(job).items.forEach(function (x) { t += (Number(x.qty) || 0) * (Number(x.price) || 0); });
+    return t;
+  }
 
   async function logoDataUrl() {
     try {
@@ -297,7 +314,7 @@
     text("Status: Done", 11, "bold", 0);
     text("Completed: " + new Date(completedAt).toLocaleString("en-US"), 11, "normal", 0);
     var paidNow = Number(job.amountPaid || 0);
-    var totNow = job.finalTotal != null ? job.finalTotal : totals(job).total;
+    var totNow = (job.finalTotal != null ? job.finalTotal : totals(job).total) + extrasTotal(job);
     text("Payment status: " + ((job.paymentStatus === "paid" || (totNow > 0 && paidNow >= totNow)) ? "Paid" : "Pending"), 11, "normal", 8); // owner's Paid declaration rules; amounts can only add a Paid
 
     text("CLIENT", 10, "bold", 1);
@@ -331,8 +348,21 @@
       }
       y += 2;
     });
+    var extrasList = extrasObj(job).items.filter(function (x) { return x.desc || Number(x.price) > 0; });
+    if (extrasList.length) {
+      y += 4;
+      text("ADDED COSTS (agregados — signed separately as an addendum)", 10, "bold", 2);
+      extrasList.forEach(function (x) {
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
+        var lines = doc.splitTextToSize(String(x.desc || "Added cost"), maxW - 150);
+        lines.forEach(function (ln) { ensure(15); doc.text(ln, M, y); y += 14; });
+        doc.text(String(x.qty), W - M - 122, y - 14);
+        doc.text(money((Number(x.qty) || 0) * (Number(x.price) || 0)), W - M - 62, y - 14);
+        y += 2;
+      });
+    }
     rule();
-    var t = totals(job); var tot = job.finalTotal != null ? job.finalTotal : t.total;
+    var t = totals(job); var tot = (job.finalTotal != null ? job.finalTotal : t.total) + extrasTotal(job);
     doc.setFont("helvetica", "bold"); doc.setFontSize(12);
     ensure(20); doc.text("Final total: " + money(tot), M, y); y += 17;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
@@ -361,6 +391,27 @@
       text("No client signature is recorded for this job.", 10.5, "normal", 6);
     }
     rule();
+
+    /* Added-costs signature (the addendum is signed separately) */
+    var exObj = extrasObj(job);
+    var exSig = null;
+    exObj.signatures.forEach(function (sg) { if (sg.version === exObj.signedVersion) exSig = sg; });
+    if (exObj.items.length) {
+      text("ADDED COSTS SIGNATURE", 10, "bold", 2);
+      if (exSig) {
+        ensure(95);
+        var exSigImg = await signatureToJpeg(exSig);
+        var exSigBox = signatureBox(exSigImg);
+        try { doc.addImage(exSigImg.dataUrl, signatureFormat(exSigImg), M, y, exSigBox.w, exSigBox.h); } catch (e) {}
+        doc.setDrawColor(120); doc.line(M, y + 62, M + 210, y + 62);
+        y += 78;
+        text("Signed by: " + exSig.name, 11, "bold", 0);
+        text("Date/time: " + new Date(exSig.signedAt).toLocaleString("en-US"), 10.5, "normal", 6);
+      } else {
+        text("The added costs had not been signed yet when this report was generated.", 10.5, "normal", 6);
+      }
+      rule();
+    }
 
     /* Photo evidence */
     text("PHOTO EVIDENCE", 10, "bold", 2);
@@ -519,5 +570,5 @@
     buildCompletion: buildCompletionPdf, completionBase64: completionBase64,
     completionDataUrl: completionDataUrl, completionDownload: completionDownload,
     photoToJpeg: imageSourceToJpeg,
-    totals: totals, total: jobTotal, money: money, COMPANY: COMPANY };
+    totals: totals, total: jobTotal, extrasTotal: extrasTotal, money: money, COMPANY: COMPANY };
 })();

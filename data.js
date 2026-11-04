@@ -68,7 +68,7 @@
       title: "", status: "draft", items: [], deposit: 0,
       terms: defaultTerms(), version: 1, signedVersion: 0, signatures: [],
       scheduledAt: "", workNotes: "", materials: "", finalTotal: null,
-      paymentStatus: "pending",
+      paymentStatus: "pending", extras: { items: [], version: 1, signedVersion: 0, signatures: [] },
       amountPaid: 0, startedAt: "", finishedAt: "", photosDeletedAt: "",
       photos: { assessment: [], before: [], after: [] },
       copyEmailStatus: "", copyEmailLog: [],
@@ -144,6 +144,17 @@
         job.items.forEach(function (it, idx) { if (it.optional) it.accepted = data.acceptedOptionals.indexOf(idx) >= 0; });
       }
       if (job.status === "quote" || job.status === "draft") job.status = "signed";
+      job.updatedAt = nowIso(); demoSave(db); return job;
+    },
+    signExtras: async function (idOrToken, data) {
+      var db = demoLoad(); var job = findJob(db, idOrToken);
+      if (!job) throw new Error("Job not found");
+      var ex = normalizeExtras(job.extras);
+      if (!ex.items.filter(function (x) { return x.desc || Number(x.price) > 0; }).length) throw new Error("There are no added costs to sign");
+      if (ex.signedVersion === ex.version) throw new Error("These added costs are already signed");
+      ex.signatures.push({ version: ex.version, name: data.name, signatureDataUrl: data.signatureDataUrl, signedAt: nowIso() });
+      ex.signedVersion = ex.version;
+      job.extras = ex;
       job.updatedAt = nowIso(); demoSave(db); return job;
     },
     addPhoto: async function (jobId, kind, dataUrl) {
@@ -273,6 +284,18 @@
     }
     return sb;
   }
+  /* Added costs ("agregados") are their own mini-document: items plus
+     their own version + signatures, signed separately from the quote
+     and merged into the final document. Stored as one jsonb object. */
+  function normalizeExtras(e) {
+    if (Array.isArray(e)) return { items: e, version: 1, signedVersion: 0, signatures: [] };
+    if (e && typeof e === "object") {
+      return { items: Array.isArray(e.items) ? e.items : [], version: Number(e.version) || 1,
+        signedVersion: Number(e.signedVersion) || 0, signatures: Array.isArray(e.signatures) ? e.signatures : [] };
+    }
+    return { items: [], version: 1, signedVersion: 0, signatures: [] };
+  }
+
   function rowToJob(r, items, signatures) {
     return {
       id: r.id, clientId: r.client_id, token: r.token, title: r.title, status: r.status,
@@ -285,6 +308,7 @@
       // Ronda 2026-11-02 fields — defaulted so the app keeps working
       // before the migration that adds these columns is applied.
       amountPaid: Number(r.amount_paid || 0),
+      extras: normalizeExtras(r.extras), // added-costs addendum (jsonb object; default until the migration lands)
       startedAt: r.started_at || "", finishedAt: r.finished_at || "",
       photosDeletedAt: r.photos_deleted_at || "",
       photos: r.photos || { assessment: [], before: [], after: [] },
@@ -350,13 +374,14 @@
         completion_email_log: j.completionEmailLog || [],
         send_log: j.sendLog || [], send_email: j.sendEmail || "",
         amount_paid: Number(j.amountPaid || 0),
+        extras: normalizeExtras(j.extras),
         started_at: j.startedAt || null, finished_at: j.finishedAt || null,
         photos_deleted_at: j.photosDeletedAt || null };
       // Graceful degradation (ronda 2026-11-02): if the migration that
       // adds the new columns has not been applied yet, PostgREST rejects
       // the write naming the unknown column — strip the new fields and
       // retry once, so the live app never breaks over a pending SQL step.
-      var NEW_COLS = ["amount_paid", "started_at", "finished_at", "photos_deleted_at"];
+      var NEW_COLS = ["amount_paid", "started_at", "finished_at", "photos_deleted_at", "extras"];
       async function attempt(r) {
         if (j.id && String(j.id).indexOf("job_") !== 0) return client().from("jobs").update(r).eq("id", j.id).select().single();
         return client().from("jobs").insert(r).select().single();
@@ -405,6 +430,13 @@
     signJob: async function (token, data) {
       var res = await client().functions.invoke("sign-and-email", {
         body: { action: "sign", token: token, name: data.name, signatureDataUrl: data.signatureDataUrl, acceptedOptionals: data.acceptedOptionals || [], pdfBase64: data.pdfBase64 || null }
+      });
+      if (res.error) throw res.error;
+      return res.data;
+    },
+    signExtras: async function (token, data) {
+      var res = await client().functions.invoke("sign-and-email", {
+        body: { action: "sign-extras", token: token, name: data.name, signatureDataUrl: data.signatureDataUrl }
       });
       if (res.error) throw res.error;
       return res.data;

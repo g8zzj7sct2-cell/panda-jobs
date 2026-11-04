@@ -4,6 +4,12 @@
 // POST { action: "complete", token, recipientEmail, pdfBase64, photoCounts,
 //        embeddedPhotoCount?, failedPhotoCount?, completedAt?, resend? }
 // POST { action: "send-quote", token, recipientEmail }   (owner JWT required)
+// POST { action: "sign-extras", token, name, signatureDataUrl }
+//   The added costs ("agregados") are their own addendum: the client
+//   signs them separately (this action appends the signature into the
+//   job's extras jsonb and marks that extras version signed). At the
+//   end they join the signed agreement in one final document whose
+//   totals are the sum of both — no separate email for the addendum.
 //
 // action "send-quote" (owner presses "Email" in the panel — added
 // 2026-10-28 after Rigo found the old mailto button never sent anything):
@@ -561,6 +567,44 @@ async function sendSchedule(
   return json({ ok: true, emailStatus: "sent" });
 }
 
+/* ---------------- added-costs signature (action "sign-extras") ------ */
+async function signExtras(
+  payload: Record<string, unknown>,
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+) {
+  const token = String(payload.token ?? "");
+  const name = String(payload.name ?? "").trim();
+  const signatureDataUrl = String(payload.signatureDataUrl ?? "");
+  if (!token || !name || !signatureDataUrl.startsWith("data:image/")) {
+    return json({ error: "token, printed name and a signature image are required" }, 400);
+  }
+  const { data: job, error: jobErr } = await supabase
+    .from("jobs").select("id, extras").eq("token", token).single();
+  if (jobErr || !job) return json({ error: "Link not valid" }, 404);
+
+  // Normalize the extras addendum (tolerate the early array shape).
+  // deno-lint-ignore no-explicit-any
+  let ex: any = job.extras ?? {};
+  if (Array.isArray(ex)) ex = { items: ex, version: 1, signedVersion: 0, signatures: [] };
+  const items = Array.isArray(ex.items) ? ex.items : [];
+  const realItems = items.filter((x: { desc?: string; price?: number }) => x?.desc || Number(x?.price) > 0);
+  if (!realItems.length) return json({ error: "There are no added costs to sign" }, 400);
+  const version = Number(ex.version ?? 1) || 1;
+  const signedVersion = Number(ex.signedVersion ?? 0) || 0;
+  if (signedVersion >= version) {
+    return json({ error: "These added costs are already signed" }, 409);
+  }
+  const signatures = Array.isArray(ex.signatures) ? ex.signatures : [];
+  const signedAt = new Date().toISOString();
+  signatures.push({ version, name, signatureDataUrl, signedAt });
+  const next = { items, version, signedVersion: version, signatures };
+  const { error: upErr } = await supabase
+    .from("jobs").update({ extras: next, updated_at: signedAt }).eq("id", job.id);
+  if (upErr) return json({ error: "Could not save the signature: " + upErr.message }, 500);
+  return json({ ok: true, signedVersion: version });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -576,6 +620,7 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   if (payload.action === "complete") return await completeJob(payload, supabase);
+  if (payload.action === "sign-extras") return await signExtras(payload, supabase);
   if (payload.action === "send-quote") {
     // Owner-only action: verify the caller's Supabase session JWT (the
     // panel attaches it automatically via functions.invoke).
