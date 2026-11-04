@@ -8,7 +8,7 @@
   var COMPANY = window.PandaPDF.COMPANY;
   var app = document.getElementById("app");
   var DEMO = D.DEMO_MODE;
-  var DEMO_PASSWORD = "panda2026"; // demo gate only — live mode uses Supabase Auth
+  var DEMO_PASSWORD = (window.PANDA_CONFIG && window.PANDA_CONFIG.DEMO_PASSWORD) || ""; // demo copies set it in their config.js; the live app ships no demo credential
   var liveUserEmail = ""; // filled by liveSession() in live mode (Account card)
   var REF_RANGES = [
     ["Diagnostic / service call", "$75 – $99"],
@@ -168,7 +168,7 @@
     app.innerHTML = headerHTML("") +
       '<main class="wrap"><div class="card"><h2>Owner login</h2>' +
       (DEMO
-        ? '<p class="muted">Demo mode: use the demo password <b>panda2026</b>. In live mode this becomes your real Supabase Auth login.</p>' +
+        ? '<p class="muted">Demo mode: sign in with this copy\u2019s demo password (set in its config.js). In live mode this becomes your real Supabase Auth login.</p>' +
           '<label class="f" for="pw">Password</label><input type="password" id="pw" autocomplete="current-password">' +
           '<div id="loginErr"></div><div class="btn-row"><button class="btn primary" id="loginBtn">Log in</button></div>'
         : '<label class="f" for="em">Email</label><input type="email" id="em" autocomplete="username">' +
@@ -178,7 +178,7 @@
     document.getElementById("loginBtn").addEventListener("click", async function () {
       var err = document.getElementById("loginErr");
       if (DEMO) {
-        if (document.getElementById("pw").value === DEMO_PASSWORD) { sessionStorage.setItem("pj.demoAuth", "1"); renderOwner(); }
+        if (!DEMO_PASSWORD || document.getElementById("pw").value === DEMO_PASSWORD) { sessionStorage.setItem("pj.demoAuth", "1"); renderOwner(); }
         else err.innerHTML = errBox("Wrong password.");
       } else {
         try {
@@ -338,7 +338,7 @@
       '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num">' + money(total) + "</td></tr></table>" +
       (job.deposit ? '<p class="small muted">Deposit at signing: <b>' + money(job.deposit) + "</b></p>" : "") +
       '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
-      (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p></div>";
+      payPill(job) + "</p></div>";
 
     /* Signed contract */
     html += '<div class="card"><h2>✍️ Signed contract</h2>';
@@ -358,7 +358,7 @@
     var m = document.getElementById("histMsg");
     var sp = document.getElementById("histSignedPdf");
     if (sp) sp.addEventListener("click", async function () {
-      await window.PandaPDF.download(job, client, { version: sig.version, filename: "angry-panda-signed-v" + sig.version + ".pdf" });
+      await downloadSignedPdf(job, client, sig, "angry-panda-signed-v" + sig.version + ".pdf");
     });
     var cp = document.getElementById("histCompletionPdf");
     if (cp) cp.addEventListener("click", async function () {
@@ -376,12 +376,35 @@
     });
   }
 
+  /* Payment label: the owner's Paid declaration rules (cash/check may
+     never be typed into Amount paid), and amounts can only ADD a PAID —
+     never leave it "pending" once the amounts cover the total. */
+  function payPill(job) {
+    var total = job.finalTotal != null ? job.finalTotal : window.PandaPDF.total(job);
+    var paid = Number(job.amountPaid || 0);
+    return (job.paymentStatus === "paid" || (total > 0 && paid >= total)) ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>';
+  }
+
+  /* The signed PDF stored at signing time is the record. Regenerating
+     from live data is only a fallback for jobs signed before storage. */
+  function downloadSignedPdf(job, client, sig, filename) {
+    var stored = null;
+    (job.documents || []).forEach(function (d) { if (d.kind === "signed-pdf" && d.version === sig.version && (d.pdfDataUrl || d.fileUrl)) stored = d; });
+    if (stored && stored.pdfDataUrl) {
+      var a = document.createElement("a"); a.href = stored.pdfDataUrl; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      return Promise.resolve();
+    }
+    if (stored && stored.fileUrl) { window.open(stored.fileUrl, "_blank"); return Promise.resolve(); }
+    return window.PandaPDF.download(job, client, { version: sig.version, filename: filename });
+  }
+
   function moneyRowsHTML(job, total, paid) {
     return '<table class="items">' +
       '<tr><td>Total</td><td class="num">' + money(total) + "</td></tr>" +
       (job.deposit ? '<tr><td>Deposit due at signing</td><td class="num">' + money(job.deposit) + "</td></tr>" : "") +
       '<tr><td>Amount paid</td><td class="num">' + money(paid) + "</td></tr>" +
-      '<tr class="total"><td>Balance due</td><td class="num">' + money(total - paid) + "</td></tr></table>";
+      '<tr class="total"><td>Balance due</td><td class="num">' + money(Math.max(0, total - paid)) + "</td></tr></table>";
   }
 
   /* The finished invoice: accepted items + totals + money state.
@@ -395,8 +418,8 @@
       }).join("") +
       '<tr class="total"><td colspan="2">Total' + (job.finalTotal != null ? " (final)" : "") + '</td><td class="num">' + money(total) + "</td></tr></table>" +
       (job.deposit ? '<p class="small muted">Deposit at signing: <b>' + money(job.deposit) + "</b></p>" : "") +
-      '<p class="small">Amount paid: <b>' + money(paid) + '</b> · Balance due: <b>' + money(total - paid) + "</b><br>" +
-      "Payment: " + (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p>";
+      '<p class="small">Amount paid: <b>' + money(paid) + '</b> · Balance due: <b>' + money(Math.max(0, total - paid)) + "</b><br>" +
+      "Payment: " + payPill(job) + "</p>";
   }
 
   function confirmPanelHTML() {
@@ -765,7 +788,7 @@
     if (docPdfBtn) docPdfBtn.addEventListener("click", async function () {
       if (!job.signatures.length) { msg.innerHTML = errBox("No signature yet — the signed PDF is generated when the client signs."); return; }
       var sig = signedSig(job) || job.signatures[job.signatures.length - 1];
-      await window.PandaPDF.download(job, client, { version: sig.version, filename: "angry-panda-signed-v" + sig.version + ".pdf" });
+      await downloadSignedPdf(job, client, sig, "angry-panda-signed-v" + sig.version + ".pdf");
     });
     var copyLinkBtn = document.getElementById("copyLink");
     if (copyLinkBtn) copyLinkBtn.addEventListener("click", function () { copyText(link, this); });
@@ -1489,7 +1512,7 @@
     if (beforePhotos.length || afterPhotos.length || job.workNotes || job.status === "done" || job.status === "invoiced") {
       html += '<section class="card"><h2>Your job</h2>';
       html += '<p>Status: <span class="pill">' + esc(stageLabel(job.status)) + "</span> " +
-        (job.paymentStatus === "paid" ? '<span class="pill">PAID</span>' : '<span class="pill amber">Payment pending</span>') + "</p>";
+        payPill(job) + "</p>";
       if ((job.status === "done" || job.status === "invoiced") && job.completedAt) {
         html += '<p class="small muted">Completed on <b>' + fmtDate(job.completedAt) + "</b>.</p>";
       }
@@ -1515,7 +1538,8 @@
   function wireClient(job, client, alreadySigned) {
     function download() {
       var sig = signedSig(job) || job.signatures[job.signatures.length - 1];
-      window.PandaPDF.download(job, client, { version: sig ? sig.version : job.version, filename: "angry-panda-signed-agreement.pdf" });
+      if (sig) return downloadSignedPdf(job, client, sig, "angry-panda-signed-agreement.pdf");
+      return window.PandaPDF.download(job, client, { version: job.version, filename: "angry-panda-signed-agreement.pdf" });
     }
     var d1 = document.getElementById("dlSigned"); if (d1) d1.addEventListener("click", download);
     var d2 = document.getElementById("dlSigned2"); if (d2) d2.addEventListener("click", download);

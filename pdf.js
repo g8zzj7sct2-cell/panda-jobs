@@ -157,15 +157,15 @@
       y += 2;
     });
     rule();
-    var t = totals(job); var tot = job.finalTotal != null ? job.finalTotal : t.total;
+    var t = totals(job); var tot = sig ? t.total : (job.finalTotal != null ? job.finalTotal : t.total); // a signed agreement always shows the total that was signed
     doc.setFont("helvetica", "bold"); doc.setFontSize(12);
     ensure(20); doc.text("Total: " + money(tot), M, y); y += 17;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
     var paidAmt = Number(job.amountPaid || 0);
     if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit), M, y); y += 16; }
     if (paidAmt > 0) { ensure(15); doc.text("Amount paid: " + money(paidAmt), M, y); y += 16; }
-    ensure(15); doc.text("Balance due on completion: " + money(tot - paidAmt), M, y); y += 16;
-    if (job.finalTotal != null) { ensure(15); doc.text("Final total confirmed in writing before work began.", M, y); y += 16; }
+    ensure(15); doc.text("Balance due on completion: " + money(Math.max(0, tot - paidAmt)), M, y); y += 16;
+    if (!sig && job.finalTotal != null) { ensure(15); doc.text("Final total confirmed in writing before work began.", M, y); y += 16; }
     y += 6; rule();
 
     /* Work summary (completed jobs) */
@@ -296,7 +296,9 @@
     if (job.title) text(job.title, 12.5, "bold", 2);
     text("Status: Done", 11, "bold", 0);
     text("Completed: " + new Date(completedAt).toLocaleString("en-US"), 11, "normal", 0);
-    text("Payment status: " + (job.paymentStatus === "paid" ? "Paid" : "Pending"), 11, "normal", 8);
+    var paidNow = Number(job.amountPaid || 0);
+    var totNow = job.finalTotal != null ? job.finalTotal : totals(job).total;
+    text("Payment status: " + ((job.paymentStatus === "paid" || (totNow > 0 && paidNow >= totNow)) ? "Paid" : "Pending"), 11, "normal", 8); // owner's Paid declaration rules; amounts can only add a Paid
 
     text("CLIENT", 10, "bold", 1);
     if (client) {
@@ -337,7 +339,7 @@
     var paidAmt = Number(job.amountPaid || 0);
     if (job.deposit) { ensure(15); doc.text("Deposit due at signing: " + money(job.deposit), M, y); y += 16; }
     if (paidAmt > 0) { ensure(15); doc.text("Amount paid: " + money(paidAmt), M, y); y += 16; }
-    ensure(15); doc.text("Balance due on completion: " + money(tot - paidAmt), M, y); y += 16;
+    ensure(15); doc.text("Balance due on completion: " + money(Math.max(0, tot - paidAmt)), M, y); y += 16;
     y += 6; rule();
 
     /* Signature (the one for the currently signed version if present) */

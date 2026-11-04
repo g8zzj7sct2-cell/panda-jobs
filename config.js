@@ -14,3 +14,7 @@ window.PANDA_CONFIG = {
 window.PANDA_CONFIG.DEMO_MODE =
   window.PANDA_CONFIG.SUPABASE_URL.includes("YOUR-PROJECT") ||
   window.PANDA_CONFIG.SUPABASE_ANON_KEY.includes("YOUR-ANON-KEY");
+
+// Demo copies only: add DEMO_PASSWORD: "…" to a DEMO copy's config above
+// to enforce its demo-login password. Never set it in this live config —
+// the production app ships no demo credential.
