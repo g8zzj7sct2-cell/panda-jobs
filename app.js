@@ -1,6 +1,8 @@
 /* Panda Jobs — app (Plan Tasks 1, 3, 4, 5, 6).
  * Hash routes:  #/            owner panel (login gate in demo; Supabase Auth live)
  *               #/c/<token>   client portal (no account, token only)
+ *               #/privacy     Privacy Policy (public, no login — Legal Pack)
+ *               #/terms       Terms of Service (public, no login — Legal Pack)
  */
 (function () {
   "use strict";
@@ -73,7 +75,8 @@
   }
   function footerHTML() {
     return '<footer class="app-foot">' + esc(COMPANY.name) + " • " + esc(COMPANY.cert) + "<br>" +
-      '<a href="mailto:' + esc(COMPANY.email) + '">' + esc(COMPANY.email) + "</a> • Chicago, IL</footer>";
+      '<a href="mailto:' + esc(COMPANY.email) + '">' + esc(COMPANY.email) + "</a> • Chicago, IL<br>" +
+      '<span class="foot-legal"><a href="#/privacy">Privacy Policy</a> • <a href="#/terms">Terms of Service</a></span></footer>';
   }
   function errBox(msg) { return '<div class="notice bad" role="alert">' + esc(msg) + "</div>"; }
 
@@ -1609,6 +1612,7 @@
         '<label class="f">Sign with your finger or mouse</label>' +
         '<div class="sig-wrap"><canvas class="sig" id="sigPad" width="640" height="190"></canvas><div class="sig-hint" id="sigHint">Sign here</div></div>' +
         '<div class="btn-row"><button class="btn light small" id="sigClear">Clear signature</button></div>' +
+        '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
         '<label class="check"><input type="checkbox" id="agree"><span>I agree to the terms above and authorize Angry Panda Heating and Cooling to perform the work in this quote.</span></label>' +
         '<div class="btn-row"><button class="btn primary" id="signBtn">Sign &amp; accept</button></div>' +
         '<p class="small muted">When you sign, your signed copy is emailed to you automatically, and a copy goes to Angry Panda.</p>';
@@ -1641,6 +1645,7 @@
           '<label class="f">Sign with your finger or mouse</label>' +
           '<div class="sig-wrap"><canvas class="sig" id="exSigPad" width="640" height="190"></canvas><div class="sig-hint" id="exSigHint">Sign here</div></div>' +
           '<div class="btn-row"><button class="btn light small" id="exSigClear">Clear signature</button></div>' +
+          '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
           '<label class="check"><input type="checkbox" id="exAgree"><span>I agree to these added costs and authorize Angry Panda Heating and Cooling to include them in my final invoice.</span></label>' +
           '<div class="btn-row"><button class="btn primary" id="exSignBtn">Sign added costs</button></div>';
       }
@@ -1792,12 +1797,81 @@
     });
   }
 
+  /* ================= LEGAL PAGES (Legal Pack, 2026-11-03) =================
+     Public views — NO login — linked from every footer (footerHTML) and
+     from the client portal's signature areas, so a client can read them
+     BEFORE signing. Text generated from the templates in
+     ~/workspace/legal-pack with THIS app's own contact email
+     (angrypandahvac@gmail.com). The Terms are aligned with
+     defaultTerms() in data.js — 15-day quote validity; deposit (if
+     listed) due at signing and the balance upon completion, with the
+     final total confirmed in writing before work begins; 12-month
+     labor warranty — so these pages never contradict the agreement a
+     client actually signs. */
+  var LEGAL_UPDATED = "November 3, 2026";
+  function legalPrivacyHTML() {
+    return "<h2>Privacy Policy</h2>" +
+      '<p class="small muted">Last updated: ' + LEGAL_UPDATED + "</p>" +
+      "<p>" + esc(COMPANY.name) + ' ("we", "us") provides heating, cooling and related home services in the Chicago, IL area. This policy explains what information we collect when you use our website, client portal or services, and what we do with it.</p>' +
+      "<h3>What we collect</h3><ul>" +
+      "<li><b>Contact details</b>: name, service address, phone number and email address.</li>" +
+      "<li><b>Job information</b>: equipment details, service notes, and <b>photos</b> of the work area taken before, during and after a job.</li>" +
+      "<li><b>Signed documents</b>: your electronic signature and the date/time of signing, kept with the quote or agreement you approved.</li>" +
+      "<li><b>Payment records</b>: amounts paid and outstanding balances. We do <b>not</b> store full card numbers.</li></ul>" +
+      "<h3>How we use it</h3><ul>" +
+      "<li>To prepare quotes, schedule and perform the work, and send you your documents (quote, appointment, completion report with photos).</li>" +
+      "<li>To keep service records for warranty and follow-up purposes.</li>" +
+      "<li>We <b>never sell</b> your information, and we do not share it with third parties for marketing.</li></ul>" +
+      "<h3>Cookies and tracking</h3>" +
+      "<p>Our website and portal do not use advertising or tracking cookies. Only the technical storage needed to keep you signed in is used.</p>" +
+      "<h3>Your choices</h3>" +
+      '<p>You may request a copy of your information, a correction, or <b>deletion</b> of your records at any time by emailing <a href="mailto:' + esc(COMPANY.email) + '">' + esc(COMPANY.email) + "</a>. We confirm your identity, delete records and photos from our systems, and confirm completion by email. Some records may be kept where the law requires it (for example, tax invoices).</p>" +
+      "<h3>Contact</h3>" +
+      "<p>" + esc(COMPANY.name) + " • Chicago, IL • " + esc(COMPANY.email) + "</p>";
+  }
+  function legalTermsHTML() {
+    return "<h2>Terms of Service</h2>" +
+      '<p class="small muted">Last updated: ' + LEGAL_UPDATED + "</p>" +
+      "<h3>Quotes and approval</h3>" +
+      "<p>Quotes are valid for 15 days from the date shown on your client link. Work begins only after you approve and sign the quote. Any additional work found during the job is quoted separately as an addendum and is performed only after your separate signed approval; addendum totals are added to the final invoice.</p>" +
+      "<h3>Scope of work</h3>" +
+      "<p>We will perform the work described in the line items of your quote at the service address on file. Any work not listed is not included. Not included, unless listed in the quote: permits, electrical panel upgrades, drywall/paint repair, ductwork replacement, and any pre-existing code violations found during the job.</p>" +
+      "<h3>Pricing and payment</h3>" +
+      "<p>Prices in a signed quote are final for the work described — no sales tax is added to residential service/installation invoices in Illinois; materials tax is included in our pricing. A deposit (if listed in your quote) is due at signing, and the remaining balance is due upon completion. The final total is confirmed in writing before any work begins.</p>" +
+      "<h3>Warranty</h3>" +
+      "<p>All labor is warranted for 12 months from the completion date. Equipment and parts carry the manufacturer's warranty. The warranty does not cover damage from misuse, lack of maintenance, power surges, or work performed by others.</p>" +
+      "<h3>Scheduling and access</h3>" +
+      "<p>Appointment windows are estimates; we will notify you of delays. The customer provides reasonable access to the equipment area.</p>" +
+      "<h3>Liability</h3>" +
+      "<p>To the extent permitted by law, our liability is limited to the amount paid for the service that gave rise to the claim.</p>" +
+      "<h3>Contact</h3>" +
+      "<p>" + esc(COMPANY.name) + " • Chicago, IL • " + esc(COMPANY.email) + "</p>";
+  }
+  function renderLegal(kind) {
+    app.innerHTML = headerHTML("") +
+      '<main class="wrap"><div class="card legal">' +
+      '<p style="margin:0 0 8px"><button class="btn light small" id="legalBack">← Back</button></p>' +
+      (kind === "terms" ? legalTermsHTML() : legalPrivacyHTML()) +
+      "</div></main>" + footerHTML();
+    window.scrollTo(0, 0);
+    /* Back returns to wherever the reader came from (the client portal
+       when they tapped a link there); a direct landing with no in-app
+       history falls back to the app root. */
+    var back = document.getElementById("legalBack");
+    if (back) back.addEventListener("click", function () {
+      if (window.history.length > 1) window.history.back();
+      else window.location.hash = "#/";
+    });
+  }
+
   /* ================= ROUTER ================= */
   function route() {
     var h = location.hash || "#/";
     var m = h.match(/^#\/c\/(.+)$/);
     app.innerHTML = '<div class="loading">Loading Panda Jobs…</div>';
     if (m) renderClient(decodeURIComponent(m[1]));
+    else if (h === "#/privacy") renderLegal("privacy");
+    else if (h === "#/terms") renderLegal("terms");
     else renderOwner();
   }
   window.addEventListener("hashchange", route);

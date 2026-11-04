@@ -1,0 +1,60 @@
+{
+  "results": [
+    {
+      "test": "Privacy view renders without login, with title and contact email",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL DEMO MODE  \u2190 Back  Privacy Policy  Last updated: November 3, 2026  Angry Panda Heating and Cooling (\"we\", \"us\") provides heating, cooling and related home"
+    },
+    {
+      "test": "Terms view renders without login, with title and contact email",
+      "pass": true,
+      "detail": "Angry Panda Heating and Cooling \u2014 Chicago, IL DEMO MODE  \u2190 Back  Terms of Service  Last updated: November 3, 2026  Quotes and approval  Quotes are valid for 15 days from the date shown on your client "
+    },
+    {
+      "test": "Terms figures match the signed agreement (15 days / 12 months)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Seeded an unsigned job for the portal check",
+      "pass": true,
+      "detail": "db773a1dbea2ba6f4afa5a52"
+    },
+    {
+      "test": "Owner panel footer shows Privacy Policy and Terms of Service links",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Portal footer shows Privacy Policy and Terms of Service links",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "Signature area shows the read-before-signing note with both links",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "test": "The note renders ABOVE the Sign & accept button",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "test": "Footer Privacy link from the portal opens the policy view",
+      "pass": true,
+      "detail": "http://127.0.0.1:8765/#/privacy"
+    },
+    {
+      "test": "Back from the policy returns to the client portal",
+      "pass": true,
+      "detail": "http://127.0.0.1:8765/#/c/db773a1dbea2ba6f4afa5a52"
+    },
+    {
+      "test": "No JS console/page errors during the legal run",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": []
+}

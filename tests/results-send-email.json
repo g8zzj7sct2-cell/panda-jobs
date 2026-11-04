@@ -28,7 +28,7 @@
     {
       "test": "sendLog entry records channel Email + recipient B, job.sendEmail = B, status advanced",
       "pass": true,
-      "detail": "{\"sendEmail\": \"spouse-b@example.com\", \"log\": [{\"channel\": \"Email\", \"at\": \"2026-11-04T01:53:34.589Z\", \"to\": \"spouse-b@example.com\"}], \"status\": \"quote\"}"
+      "detail": "{\"sendEmail\": \"spouse-b@example.com\", \"log\": [{\"channel\": \"Email\", \"at\": \"2026-11-04T02:49:16.193Z\", \"to\": \"spouse-b@example.com\"}], \"status\": \"quote\"}"
     },
     {
       "test": "Field still shows B after reload (job.sendEmail persisted) and history line remains",

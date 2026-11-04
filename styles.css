@@ -221,6 +221,17 @@ canvas.sig{display:block;width:100%;height:190px;touch-action:none}
 
 footer.app-foot{text-align:center;color:var(--muted);font-size:13px;padding:20px 12px 32px}
 footer.app-foot a{color:var(--brand);font-weight:600}
+footer.app-foot .foot-legal{display:inline-block;margin-top:5px}
+
+/* Legal pages (Privacy Policy / Terms of Service) — public views,
+   same visual system; readable measure, sober headings */
+.legal h3{margin:18px 0 6px;font-size:15.5px}
+.legal p{margin:8px 0}
+.legal ul{margin:8px 0;padding-left:22px}
+.legal li{margin:5px 0}
+.legal a{color:var(--brand);font-weight:600}
+.legal-note{margin:10px 0 2px}
+.legal-note a{color:var(--brand);font-weight:600}
 code.linkbox{display:block;background:#eef1ec;border:1px solid var(--line);border-radius:var(--r-sm);padding:11px;font-size:12.5px;word-break:break-all}
 
 /* Completion ("Complete job") confirmation + state — the decision panel leads */
