@@ -18,7 +18,12 @@
     {
       "test": "Seeded an unsigned job for the portal check",
       "pass": true,
-      "detail": "db773a1dbea2ba6f4afa5a52"
+      "detail": "1f31b26aab16751b2029c510"
+    },
+    {
+      "test": "Seeded a job with unsigned added costs for the extras note check",
+      "pass": true,
+      "detail": "8bc7ad435a9b3187c322f7e8"
     },
     {
       "test": "Owner panel footer shows Privacy Policy and Terms of Service links",
@@ -41,6 +46,16 @@
       "detail": "true"
     },
     {
+      "test": "The note sits ABOVE the whole signature block (before name field and pad in DOM order)",
+      "pass": true,
+      "detail": "{\"beforeName\": true, \"beforePad\": true}"
+    },
+    {
+      "test": "Added-costs block has its own note BEFORE its name field and pad",
+      "pass": true,
+      "detail": "{\"count\": 2, \"beforeName\": true, \"beforePad\": true}"
+    },
+    {
       "test": "Footer Privacy link from the portal opens the policy view",
       "pass": true,
       "detail": "http://127.0.0.1:8765/#/privacy"
@@ -48,7 +63,7 @@
     {
       "test": "Back from the policy returns to the client portal",
       "pass": true,
-      "detail": "http://127.0.0.1:8765/#/c/db773a1dbea2ba6f4afa5a52"
+      "detail": "http://127.0.0.1:8765/#/c/1f31b26aab16751b2029c510"
     },
     {
       "test": "No JS console/page errors during the legal run",

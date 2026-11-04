@@ -6,9 +6,9 @@
       "detail": ""
     },
     {
-      "test": "10 worst-case noise photos (source ~25983746 chars) produce base64 <= 2,750,000",
+      "test": "10 worst-case noise photos (source ~25985002 chars) produce base64 <= 2,750,000",
       "pass": true,
-      "detail": "base64=1383420"
+      "detail": "base64=1379860"
     },
     {
       "test": "overBudget is falsy (small/emergency profiles actually fit)",
@@ -38,12 +38,12 @@
     {
       "test": "Debug sizes present: logo/signature chars + per-photo src->out with natural dims",
       "pass": true,
-      "detail": "[{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598895, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2599155, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"after\", \"index\": 0, \"sr"
+      "detail": "[{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598127, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598523, \"natW\": 0, \"natH\": 0, \"outChars\": 0, \"outW\": 0, \"outH\": 0}, {\"kind\": \"after\", \"index\": 0, \"sr"
     },
     {
       "test": "Forced budget=400,000 fits with photos inside (photos/thumb300 mode), all embedded",
       "pass": true,
-      "detail": "{\"b64len\": 377884, \"overBudget\": false, \"finalMode\": \"thumb300\", \"sizes\": 8, \"embedded\": 3, \"photosSkipped\": false, \"logoChars\": 123626, \"sigChars\": 0, \"debugPhotos\": [{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598895, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5207, \"outW\": 300, \"outH\": 225}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2599155, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5207, \"outW\": 300, \"outH\": 225}, {\"kind\": \"after\", \"index\": 0, \"srcKind\":"
+      "detail": "{\"b64len\": 377944, \"overBudget\": false, \"finalMode\": \"thumb300\", \"sizes\": 8, \"embedded\": 3, \"photosSkipped\": false, \"logoChars\": 123626, \"sigChars\": 0, \"debugPhotos\": [{\"kind\": \"assessment\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598127, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5251, \"outW\": 300, \"outH\": 225}, {\"kind\": \"before\", \"index\": 0, \"srcKind\": \"data\", \"srcChars\": 2598523, \"natW\": 1600, \"natH\": 1200, \"outChars\": 5195, \"outW\": 300, \"outH\": 225}, {\"kind\": \"after\", \"index\": 0, \"srcKind\":"
     },
     {
       "test": "Big transparent signature (2200x1100) has a small source data URL (< 200,000 chars)",
@@ -53,7 +53,7 @@
     {
       "test": "completionBase64 with big signature + noise photos fits budget in 'photos' mode",
       "pass": true,
-      "detail": "{\"b64len\": 1926840, \"finalMode\": \"photos\", \"overBudget\": false}"
+      "detail": "{\"b64len\": 1927424, \"finalMode\": \"photos\", \"overBudget\": false}"
     },
     {
       "test": "All 3 photos still embedded alongside the big signature",

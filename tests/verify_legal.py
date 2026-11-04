@@ -12,10 +12,14 @@ Covers:
      agreement already promises (15-day quote validity, 12-month labor
      warranty — aligned with defaultTerms() in data.js).
   B) Client portal (unsigned job): the footer shows the Privacy Policy /
-     Terms of Service links, and the note next to the signature area
+     Terms of Service links, and the note above the signature block
      ("Before you sign, please read our Privacy Policy and Terms of
-     Service") renders ABOVE the Sign button. Following the footer
-     Privacy link renders the policy; Back returns to the portal.
+     Service") renders BEFORE the signer name field and the signature
+     pad in DOM order (and above the Sign button). A second job with
+     unsigned added costs (extras) carries its own note before the
+     extras name field and pad. Following the footer Privacy link
+     renders the policy; Back returns to the portal (route remembered
+     by the router, not browser history).
   C) Owner panel footer shows the same two links after demo login.
 
 Run:  ~/workspace/venvs/playwright-test/bin/python tests/verify_legal.py
@@ -76,7 +80,7 @@ with sync_playwright() as p:
     page.fill("#pw", "panda2026")
     page.click("#loginBtn")
     page.wait_for_selector('button[data-tab="clients"]', timeout=5000)
-    token = page.evaluate("""async () => {
+    tokens = page.evaluate("""async () => {
       await PandaData.saveClient({name:'Legal Check Client', phone:'(312) 555-0111', email:'legal.check@example.com', address:'10 W Legal Ave, Chicago, IL', equipment:'', notes:''});
       const cs = await PandaData.listClients();
       const c = cs.find(x => x.name === 'Legal Check Client');
@@ -84,9 +88,17 @@ with sync_playwright() as p:
       j.title = 'Legal check job';
       j.items = [{desc:'Service call', qty:1, price:200, optional:false, accepted:true}];
       await PandaData.saveJob(j);
-      return j.token;
+      const j2 = PandaData.newJob(c.id);
+      j2.title = 'Legal check extras job';
+      j2.items = [{desc:'Service call', qty:1, price:200, optional:false, accepted:true}];
+      j2.extras = { items: [{desc:'Added part', qty:1, price:75}], version: 1, signedVersion: 0, signatures: [] };
+      await PandaData.saveJob(j2);
+      return { main: j.token, extras: j2.token };
     }""")
+    token = tokens["main"]
+    token2 = tokens["extras"]
     rec("Seeded an unsigned job for the portal check", bool(token), token or "no token")
+    rec("Seeded a job with unsigned added costs for the extras note check", bool(token2), token2 or "no token")
 
     # ---------- C) owner footer carries the links ----------
     txt = body(page)
@@ -115,7 +127,40 @@ with sync_playwright() as p:
       return n.getBoundingClientRect().bottom <= b.getBoundingClientRect().top;
     }""")
     rec("The note renders ABOVE the Sign & accept button", order is True, json.dumps(order))
+    dom_order = page.evaluate("""() => {
+      const n = document.querySelector('.legal-note');
+      const nm = document.getElementById('sigName');
+      const pad = document.getElementById('sigPad');
+      if (!n || !nm || !pad) return null;
+      const F = Node.DOCUMENT_POSITION_FOLLOWING;
+      return { beforeName: !!(n.compareDocumentPosition(nm) & F),
+               beforePad: !!(n.compareDocumentPosition(pad) & F) };
+    }""")
+    rec("The note sits ABOVE the whole signature block (before name field and pad in DOM order)",
+        bool(dom_order) and dom_order["beforeName"] and dom_order["beforePad"], json.dumps(dom_order))
     page.screenshot(path=os.path.join(SHOTS, "26-legal-portal.png"), full_page=True)
+
+    # ---------- extras block carries its own note, also on top ----------
+    page.goto(BASE + "/#/c/" + token2)
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#exSigPad", timeout=5000)
+    ex_order = page.evaluate("""() => {
+      const notes = document.querySelectorAll('.legal-note');
+      const nm = document.getElementById('exSigName');
+      const pad = document.getElementById('exSigPad');
+      if (!nm || !pad || notes.length < 2) return null;
+      const n = notes[notes.length - 1];
+      const F = Node.DOCUMENT_POSITION_FOLLOWING;
+      return { count: notes.length,
+               beforeName: !!(n.compareDocumentPosition(nm) & F),
+               beforePad: !!(n.compareDocumentPosition(pad) & F) };
+    }""")
+    rec("Added-costs block has its own note BEFORE its name field and pad",
+        bool(ex_order) and ex_order["count"] >= 2 and ex_order["beforeName"] and ex_order["beforePad"],
+        json.dumps(ex_order))
+    page.goto(BASE + "/#/c/" + token)
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#sigPad", timeout=5000)
 
     # ---------- follow the footer link and come Back ----------
     page.click('footer.app-foot a[href="#/privacy"]')

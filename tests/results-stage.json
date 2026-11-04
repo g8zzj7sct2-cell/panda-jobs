@@ -8,27 +8,27 @@
     {
       "test": "Search by NAME filters to the one client and selects her",
       "pass": true,
-      "detail": "{\"visible\": [\"Aiko Tanaka \\u2014 aiko.t@example.com\"], \"value\": \"cli_8453c95b651bbd2bc1cb8e06\"}"
+      "detail": "{\"visible\": [\"Aiko Tanaka \\u2014 aiko.t@example.com\"], \"value\": \"cli_dd279887b35f289c1a55f809\"}"
     },
     {
       "test": "Search by PHONE digits filters to John Smith",
       "pass": true,
-      "detail": "{\"visible\": [\"John Smith \\u2014 john.smith@example.com\"], \"value\": \"cli_dab9a069881389502e0f9f57\"}"
+      "detail": "{\"visible\": [\"John Smith \\u2014 john.smith@example.com\"], \"value\": \"cli_e2eb10bb522fa973fab4db4a\"}"
     },
     {
       "test": "Search by EMAIL filters to Maria Fernanda Lopez",
       "pass": true,
-      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_326538809fefc37164ba4b0c\"}"
+      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_5681c9fcafd05b89036261ad\"}"
     },
     {
       "test": "Search by ADDRESS filters to the Fulton St client",
       "pass": true,
-      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_326538809fefc37164ba4b0c\"}"
+      "detail": "{\"visible\": [\"Maria Fernanda Lopez \\u2014 maria.lopez@example.com\"], \"value\": \"cli_5681c9fcafd05b89036261ad\"}"
     },
     {
       "test": "No-match search hides every option and says so",
       "pass": true,
-      "detail": "{\"visible\": [], \"value\": \"cli_326538809fefc37164ba4b0c\"}"
+      "detail": "{\"visible\": [], \"value\": \"cli_5681c9fcafd05b89036261ad\"}"
     },
     {
       "test": "Create job uses the client the search selected",
@@ -48,7 +48,7 @@
     {
       "test": "Start work stamps startedAt and the button is replaced by the started line",
       "pass": true,
-      "detail": "{\"status\": \"in_progress\", \"startedAt\": \"2026-11-04T02:48:56.749Z\", \"photosDeletedAt\": \"\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
+      "detail": "{\"status\": \"in_progress\", \"startedAt\": \"2026-11-04T03:00:34.348Z\", \"photosDeletedAt\": \"\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
     },
     {
       "test": "Done job still holds its photos (2) and offers the confirm-delete button",
@@ -63,7 +63,7 @@
     {
       "test": "CONFIRMING deletes the photos, stamps the purge, and the evidence PDF stays",
       "pass": true,
-      "detail": "{\"status\": \"done\", \"startedAt\": \"\", \"photosDeletedAt\": \"2026-11-04T02:48:58.892Z\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
+      "detail": "{\"status\": \"done\", \"startedAt\": \"\", \"photosDeletedAt\": \"2026-11-04T03:00:37.288Z\", \"photos\": {\"assessment\": 0, \"before\": 0, \"after\": 0}}"
     },
     {
       "test": "No JS console/page errors during the stage-flow run",

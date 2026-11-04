@@ -1608,11 +1608,11 @@
       html += '<div class="btn-row"><button class="btn primary" id="dlSigned">Download my signed PDF</button></div>';
     } else {
       html += '<div id="signMsg"></div>' +
+        '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
         '<label class="f">Your full name (printed)</label><input type="text" id="sigName" autocomplete="name" placeholder="e.g. Maria Lopez">' +
         '<label class="f">Sign with your finger or mouse</label>' +
         '<div class="sig-wrap"><canvas class="sig" id="sigPad" width="640" height="190"></canvas><div class="sig-hint" id="sigHint">Sign here</div></div>' +
         '<div class="btn-row"><button class="btn light small" id="sigClear">Clear signature</button></div>' +
-        '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
         '<label class="check"><input type="checkbox" id="agree"><span>I agree to the terms above and authorize Angry Panda Heating and Cooling to perform the work in this quote.</span></label>' +
         '<div class="btn-row"><button class="btn primary" id="signBtn">Sign &amp; accept</button></div>' +
         '<p class="small muted">When you sign, your signed copy is emailed to you automatically, and a copy goes to Angry Panda.</p>';
@@ -1641,11 +1641,11 @@
           '<p class="small muted">At the end, this addendum and your signed agreement are joined into one final document with the totals added together.</p>';
       } else {
         html += '<div id="exSignMsg"></div>' +
+          '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
           '<label class="f">Your full name (printed)</label><input type="text" id="exSigName" autocomplete="name" placeholder="e.g. Maria Lopez">' +
           '<label class="f">Sign with your finger or mouse</label>' +
           '<div class="sig-wrap"><canvas class="sig" id="exSigPad" width="640" height="190"></canvas><div class="sig-hint" id="exSigHint">Sign here</div></div>' +
           '<div class="btn-row"><button class="btn light small" id="exSigClear">Clear signature</button></div>' +
-          '<p class="small muted legal-note">Before you sign, please read our <a href="#/privacy">Privacy Policy</a> and <a href="#/terms">Terms of Service</a>.</p>' +
           '<label class="check"><input type="checkbox" id="exAgree"><span>I agree to these added costs and authorize Angry Panda Heating and Cooling to include them in my final invoice.</span></label>' +
           '<div class="btn-row"><button class="btn primary" id="exSignBtn">Sign added costs</button></div>';
       }
@@ -1808,6 +1808,10 @@
      final total confirmed in writing before work begins; 12-month
      labor warranty — so these pages never contradict the agreement a
      client actually signs. */
+  /* Last non-legal hash visited, remembered by route() so the legal
+     pages' Back button returns there (client portal, owner panel)
+     instead of guessing from browser history. */
+  var lastNonLegalHash = "";
   var LEGAL_UPDATED = "November 3, 2026";
   function legalPrivacyHTML() {
     return "<h2>Privacy Policy</h2>" +
@@ -1854,12 +1858,14 @@
       (kind === "terms" ? legalTermsHTML() : legalPrivacyHTML()) +
       "</div></main>" + footerHTML();
     window.scrollTo(0, 0);
-    /* Back returns to wherever the reader came from (the client portal
-       when they tapped a link there); a direct landing with no in-app
-       history falls back to the app root. */
+    /* Back returns to the route the reader came from (the client
+       portal when they tapped a link there), remembered by route();
+       a direct landing with nothing remembered falls back to browser
+       history, and then to the app root as a last resort. */
     var back = document.getElementById("legalBack");
     if (back) back.addEventListener("click", function () {
-      if (window.history.length > 1) window.history.back();
+      if (lastNonLegalHash) window.location.hash = lastNonLegalHash;
+      else if (window.history.length > 1) window.history.back();
       else window.location.hash = "#/";
     });
   }
@@ -1867,6 +1873,7 @@
   /* ================= ROUTER ================= */
   function route() {
     var h = location.hash || "#/";
+    if (h !== "#/privacy" && h !== "#/terms") lastNonLegalHash = h;
     var m = h.match(/^#\/c\/(.+)$/);
     app.innerHTML = '<div class="loading">Loading Panda Jobs…</div>';
     if (m) renderClient(decodeURIComponent(m[1]));
