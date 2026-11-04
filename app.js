@@ -147,11 +147,23 @@
        account card or toggle at all, header unchanged. */
     var html = headerHTML((DEMO ? "" : '<button class="btn small light" id="acctToggle" aria-expanded="false" aria-controls="acctCard">Account</button>') +
       '<button class="btn small light" id="logoutBtn">Log out</button>');
-    html += '<nav class="owner-nav">' +
-      '<button data-tab="jobs" class="' + (ownerTab === "jobs" ? "on" : "") + '">Jobs</button>' +
-      '<button data-tab="clients" class="' + (ownerTab === "clients" ? "on" : "") + '">Clients</button>' +
-      '<button data-tab="history" class="' + (ownerTab === "history" ? "on" : "") + '">History</button>' +
-      '<button data-tab="new" class="' + (ownerTab === "new" ? "on" : "") + '">+ New job</button></nav>';
+    /* Owner menu — Pools pattern (2026-11-03): vertical sidebar on
+       desktop, fixed bottom tab bar on mobile. Both navs carry the same
+       [data-tab] buttons — wireOwner() binds them all after each render —
+       and CSS shows exactly one per breakpoint. The sidebar comes FIRST
+       in the DOM so a bare [data-tab] selector resolves to the visible
+       desktop button on wide screens. Button text stays exactly
+       "Jobs" / "Clients" / "History" / "+ New job"; the <i> icons are
+       empty, decorative CSS masks. Detail screens and the client portal
+       never render this menu. */
+    var navBtns = [["jobs", "Jobs", "ic-jobs"], ["clients", "Clients", "ic-clients"],
+      ["history", "History", "ic-history"], ["new", "+ New job", "ic-new"]]
+      .map(function (t) {
+        return '<button data-tab="' + t[0] + '" class="' + (ownerTab === t[0] ? "on" : "") + '">' +
+          '<i class="nav-ic ' + t[2] + '" aria-hidden="true"></i>' + t[1] + "</button>";
+      }).join("");
+    html += '<div class="owner-layout"><nav class="owner-side" aria-label="Main menu">' + navBtns + "</nav>" +
+      '<div class="owner-main">';
     html += '<main class="wrap wide">';
     if (DEMO) html += '<div class="notice warn"><b>Demo mode:</b> data is stored only in this browser (localStorage) and the signed-copy email is simulated — nothing is sent. Fill in <code>config.js</code> with the Supabase project to go live (see README).</div>';
     if (ownerTab === "clients") html += clientsHTML(clients, jobs);
@@ -160,6 +172,7 @@
     else html += jobsHTML(jobs, byClient);
     if (!DEMO) html += accountHTML();
     html += "</main>" + footerHTML();
+    html += "</div></div>" + '<nav class="owner-tabbar" aria-label="Main menu">' + navBtns + "</nav>";
     app.innerHTML = html;
     wireOwner(clients, jobs, byClient);
   }

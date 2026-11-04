@@ -33,7 +33,7 @@
     {
       "test": "Copy link puts the exact client link on the clipboard",
       "pass": true,
-      "detail": "http://127.0.0.1:8765/#/c/415087823d2691e345963ee9"
+      "detail": "http://127.0.0.1:8765/#/c/fcea44c9de359f70af6fba54"
     },
     {
       "test": "Copy button shows 'Copied' feedback",
@@ -48,12 +48,12 @@
     {
       "test": "Send persisted on the job (sendLog + status=quote)",
       "pass": true,
-      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-03T20:42:45.708Z\"}]}"
+      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-04T01:53:28.283Z\"}]}"
     },
     {
       "test": "Email click shows the sent confirmation and logs 'Email' + recipient; sendEmail persisted",
       "pass": true,
-      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-03T20:42:45.708Z\"}, {\"channel\": \"Email\", \"at\": \"2026-11-03T20:42:46.292Z\", \"to\": \"sendtest@example.com\"}], \"sendEmail\": \"sendtest@example.com\"}"
+      "detail": "{\"status\": \"quote\", \"log\": [{\"channel\": \"Text message\", \"at\": \"2026-11-04T01:53:28.283Z\"}, {\"channel\": \"Email\", \"at\": \"2026-11-04T01:53:28.649Z\", \"to\": \"sendtest@example.com\"}], \"sendEmail\": \"sendtest@example.com\"}"
     },
     {
       "test": "Send log still shown after reload",
